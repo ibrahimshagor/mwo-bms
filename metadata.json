@@ -1,0 +1,10 @@
+{
+  "name": "MWO Beneficiary MS",
+  "description": "A multi-role Beneficiary Management System for Muslim Welfare Organization to track distributions, manage beneficiaries with face recognition, and issue digital cards.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
