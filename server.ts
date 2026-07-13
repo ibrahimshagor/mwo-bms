@@ -144,24 +144,52 @@ Provide your face-recognition match outcome. Format the output strictly as a JSO
 }`,
       });
 
-      // Query Gemini 3.5 Flash Multimodal model
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: parts,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              match: { type: Type.BOOLEAN },
-              matchedId: { type: Type.STRING },
-              confidence: { type: Type.NUMBER },
-              reasoning: { type: Type.STRING },
+      // Query Gemini 3.5 Flash Multimodal model with resilient retries for temporary spikes/503 errors
+      let response;
+      let lastErr: any;
+      const maxAttempts = 3;
+      
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: parts,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  match: { type: Type.BOOLEAN },
+                  matchedId: { type: Type.STRING },
+                  confidence: { type: Type.NUMBER },
+                  reasoning: { type: Type.STRING },
+                },
+                required: ["match", "matchedId", "confidence", "reasoning"],
+              },
             },
-            required: ["match", "matchedId", "confidence", "reasoning"],
-          },
-        },
-      });
+          });
+          break; // successfully received a response, break retry loop
+        } catch (err: any) {
+          lastErr = err;
+          const errStr = String(err);
+          const isRetryable = errStr.includes("503") || 
+                              errStr.includes("UNAVAILABLE") || 
+                              errStr.includes("429") || 
+                              errStr.includes("RESOURCE_EXHAUSTED");
+                              
+          if (isRetryable && attempt < maxAttempts) {
+            const delayMs = attempt * 1000; // 1000ms, then 2000ms
+            console.warn(`Gemini 3.5 Flash is experiencing high demand (Attempt ${attempt}/${maxAttempts}). Retrying in ${delayMs}ms... Error detail:`, errStr);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      if (!response) {
+        throw lastErr || new Error("Failed to communicate with Gemini API.");
+      }
 
       const responseText = response.text;
       if (!responseText) {

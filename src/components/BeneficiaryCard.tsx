@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { Download, Check } from 'lucide-react';
 import { Beneficiary } from '../types';
+import { getBasePath } from '../App';
 
 interface BeneficiaryCardProps {
   beneficiary: Beneficiary;
@@ -316,7 +317,7 @@ export default function BeneficiaryCard({ beneficiary, onClose }: BeneficiaryCar
       portraitImg.src = displayPhoto;
     };
 
-    logoImg.src = '/mwo-logo.png';
+    logoImg.src = getBasePath() + '/mwo-logo.svg';
   };
 
   return (
@@ -349,7 +350,7 @@ export default function BeneficiaryCard({ beneficiary, onClose }: BeneficiaryCar
           {/* Card Top Branding Header */}
           <div className="flex justify-center items-center h-9 z-10 mt-1">
             <img 
-              src="/mwo-logo.png" 
+              src={getBasePath() + '/mwo-logo.svg'} 
               alt="Muslim Welfare Organization logo" 
               className="max-h-full max-w-[160px] object-contain select-none"
               onError={(e) => {

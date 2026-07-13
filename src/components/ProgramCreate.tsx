@@ -45,6 +45,7 @@ export default function ProgramCreate({
   // Search & Multiple Donors variables
   const [selectedDonors, setSelectedDonors] = useState<string[]>([]);
   const [donorSearch, setDonorSearch] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (editingProgram) {
@@ -86,9 +87,10 @@ export default function ProgramCreate({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return alert('Program name is required.');
-    if (selectedDonors.length === 0) return alert('Please select at least one donor for this program.');
-    if (targetStockSize <= 0) return alert('Target distribution stock size must be greater than zero.');
+    setFormError(null);
+    if (!name.trim()) { setFormError('Program name is required.'); return; }
+    if (selectedDonors.length === 0) { setFormError('Please select at least one donor for this program.'); return; }
+    if (targetStockSize <= 0) { setFormError('Target distribution stock size must be greater than zero.'); return; }
 
     onSave({
       id: id.trim(),
@@ -128,6 +130,13 @@ export default function ProgramCreate({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {formError && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold px-4 py-3 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-250">
+            <span className="w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0">&times;</span>
+            <span className="flex-1">{formError}</span>
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-1">
             PROGRAM UNIQUE TRACKING ID <span className="text-red-500">*</span>

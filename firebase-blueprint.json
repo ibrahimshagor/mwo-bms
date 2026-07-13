@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["id", "name", "role"]
+    },
+    "Program": {
+      "title": "Program",
+      "description": "Distribution program",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "donors": { "type": "array" },
+        "beneficiaryCommunity": { "type": "string" },
+        "programDate": { "type": "string" },
+        "programDuration": { "type": "string" },
+        "targetStockSize": { "type": "number" },
+        "remainingStock": { "type": "number" }
+      },
+      "required": ["id", "name", "type", "beneficiaryCommunity", "programDate", "targetStockSize"]
+    },
+    "Beneficiary": {
+      "title": "Beneficiary",
+      "description": "Registered beneficiary details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "nationality": { "type": "string" },
+        "dob": { "type": "string" },
+        "nidOrBirthCert": { "type": "string" },
+        "mobile": { "type": "string" },
+        "gender": { "type": "string" },
+        "address": { "type": "string" },
+        "photo": { "type": "string" },
+        "signature": { "type": "string" },
+        "createdAdmin": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "nationality", "nidOrBirthCert"]
+    },
+    "ServiceRecord": {
+      "title": "ServiceRecord",
+      "description": "Distribution service record log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "programId": { "type": "string" },
+        "beneficiaryId": { "type": "string" },
+        "packageCount": { "type": "number" },
+        "servedDate": { "type": "string" },
+        "servedAdmin": { "type": "string" }
+      },
+      "required": ["id", "programId", "beneficiaryId", "packageCount", "servedAdmin"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "System accounts list"
+    },
+    "/programs/{programId}": {
+      "schema": "Program",
+      "description": "Distribution programs list"
+    },
+    "/beneficiaries/{beneficiaryId}": {
+      "schema": "Beneficiary",
+      "description": "Registered beneficiaries list"
+    },
+    "/service_records/{recordId}": {
+      "schema": "ServiceRecord",
+      "description": "Log of served distributions"
+    }
+  }
+}

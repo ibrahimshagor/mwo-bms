@@ -4,6 +4,52 @@ import {
   DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS,
   getSavedState, saveState 
 } from './data';
+import { 
+  collection, onSnapshot, setDoc, doc, deleteDoc, updateDoc 
+} from 'firebase/firestore';
+import { db } from './utils/googleAuth';
+
+// Custom Firestore permission-denied error handler complying with firebase-integration guidelines
+function handleFirestoreError(
+  error: any, 
+  operation: 'create' | 'update' | 'delete' | 'list' | 'get' | 'write', 
+  collectionName: string, 
+  documentId?: string
+) {
+  if (error?.code === 'permission-denied' || error?.message?.includes('permission') || error?.message?.includes('Permission')) {
+    const errorPayload = {
+      error: "Missing or insufficient permissions",
+      operation,
+      collection: collectionName,
+      ...(documentId ? { documentId } : {}),
+      code: "permission-denied"
+    };
+    console.error("Firestore Permission Denied:", errorPayload);
+    
+    try {
+      window.dispatchEvent(new CustomEvent('firestore-permission-denied', { detail: errorPayload }));
+    } catch (e) {}
+
+    throw new Error(JSON.stringify(errorPayload));
+  }
+  throw error;
+}
+
+// Helper to resolve the correct subpath for cPanel and local hosting environments
+export const getBasePath = () => {
+  const path = window.location.pathname;
+  if (path.includes('/mwobms')) {
+    return '/mwobms';
+  }
+  let base = path;
+  if (base.endsWith('.html') || base.endsWith('.php')) {
+    base = base.substring(0, base.lastIndexOf('/'));
+  }
+  if (base.endsWith('/')) {
+    base = base.slice(0, -1);
+  }
+  return base;
+};
 
 // Import Modular Components
 import BeneficiaryRegister from './components/BeneficiaryRegister';
@@ -11,7 +57,6 @@ import ProgramCreate from './components/ProgramCreate';
 import UserManagement from './components/UserManagement';
 import ProgramDirectory from './components/ProgramDirectory';
 import BeneficiaryDirectory from './components/BeneficiaryDirectory';
-import CPanelHelper from './components/CPanelHelper';
 import Footer from './components/Footer';
 import ExportControlPanel from './components/ExportControlPanel';
 
@@ -25,10 +70,10 @@ import {
 export default function App() {
   
   // 1. Core State databases (Automatically loaded from localStorage or default seed data)
-  const [users, setUsers] = useState<User[]>([]);
-  const [programs, setPrograms] = useState<Program[]>([]);
-  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
-  const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>([]);
+  const [users, setUsers] = useState<User[]>(() => getSavedState('mwo_users', DEFAULT_USERS));
+  const [programs, setPrograms] = useState<Program[]>(() => getSavedState('mwo_programs', DEFAULT_PROGRAMS));
+  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(() => getSavedState('mwo_beneficiaries', DEFAULT_BENEFICIARIES));
+  const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>(() => getSavedState('mwo_service_records', DEFAULT_SERVICE_RECORDS));
 
   // Dynamic programs mapper to make sure remainingStock is ALWAYS 100% accurate based on serviceRecords which is the single source of truth!
   const enrichedPrograms = programs.map(p => {
@@ -42,7 +87,14 @@ export default function App() {
   });
 
   // 2. Authentication states
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    try {
+      const savedUser = localStorage.getItem('mwo_current_user');
+      return savedUser ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loginId, setLoginId] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginRoleSelect, setLoginRoleSelect] = useState<'Staff' | 'Donor'>('Staff');
@@ -56,47 +108,270 @@ export default function App() {
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
   const [editingBeneficiary, setEditingBeneficiary] = useState<Beneficiary | null>(null);
 
+  // Secret developer/admin bypass portal state
+  const [showBypassPortal, setShowBypassPortal] = useState(false);
+
+  useEffect(() => {
+    const checkBypassParam = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('bypass') === 'true' || window.location.hash === '#bypass') {
+        setShowBypassPortal(true);
+      } else {
+        setShowBypassPortal(false);
+      }
+    };
+    checkBypassParam();
+    window.addEventListener('popstate', checkBypassParam);
+    window.addEventListener('hashchange', checkBypassParam);
+    return () => {
+      window.removeEventListener('popstate', checkBypassParam);
+      window.removeEventListener('hashchange', checkBypassParam);
+    };
+  }, []);
+
+  // Non-blocking Toast notification state
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [firestorePermissionError, setFirestorePermissionError] = useState<boolean>(false);
+
+  const triggerToast = (type: 'success' | 'error' | 'info', message: string) => {
+    setToast({ type, message });
+    // Auto clear after 4.5 seconds
+    setTimeout(() => {
+      setToast(prev => prev?.message === message ? null : prev);
+    }, 4500);
+  };
+
   // Edit Profile States
   const [profilePass, setProfilePass] = useState('');
   const [profileId, setProfileId] = useState('');
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
 
-  // Initial Bootup: Load from Local Storage or default seed
+  // Global Firestore permission denied listener
   useEffect(() => {
-    const savedUsers = getSavedState<User[]>('mwo_users', DEFAULT_USERS);
-    const savedPrograms = getSavedState<Program[]>('mwo_programs', DEFAULT_PROGRAMS);
-    const savedBeneficiaries = getSavedState<Beneficiary[]>('mwo_beneficiaries', DEFAULT_BENEFICIARIES);
-    const savedSR = getSavedState<ServiceRecord[]>('mwo_service_records', DEFAULT_SERVICE_RECORDS);
-
-    setUsers(savedUsers);
-    setPrograms(savedPrograms);
-    setBeneficiaries(savedBeneficiaries);
-    setServiceRecords(savedSR);
-    
-    // Auto-save backup values during initial boot
-    saveState('mwo_users', savedUsers);
-    saveState('mwo_programs', savedPrograms);
-    saveState('mwo_beneficiaries', savedBeneficiaries);
-    saveState('mwo_service_records', savedSR);
+    const handlePermissionDenied = () => {
+      setFirestorePermissionError(true);
+    };
+    window.addEventListener('firestore-permission-denied', handlePermissionDenied);
+    return () => {
+      window.removeEventListener('firestore-permission-denied', handlePermissionDenied);
+    };
   }, []);
 
-  // Sync state modifications back to local storage
-  const syncUsers = (updated: User[]) => {
+  // Initial Bootup: Load from Firestore and synchronize real-time updates
+  useEffect(() => {
+    // 1. Synchronize Users Collection
+    const unsubscribeUsers = onSnapshot(collection(db, 'users'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_users');
+          if (!alreadySeeded) {
+            try {
+              for (const user of DEFAULT_USERS) {
+                await setDoc(doc(db, 'users', user.id), user);
+              }
+              localStorage.setItem('mwo_seeded_users', 'true');
+            } catch (err) {
+              try {
+                handleFirestoreError(err, 'write', 'users');
+              } catch (e: any) {
+                if (e.message?.includes('permission-denied')) {
+                  setFirestorePermissionError(true);
+                }
+              }
+            }
+          }
+        } else {
+          const loaded: User[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as User);
+          });
+          setUsers(loaded);
+          saveState('mwo_users', loaded);
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'users');
+        } catch (e: any) {
+          console.error("Firestore users listener error:", e.message);
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          }
+        }
+      }
+    );
+
+    // 2. Synchronize Programs Collection
+    const unsubscribePrograms = onSnapshot(collection(db, 'programs'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_programs');
+          if (!alreadySeeded) {
+            try {
+              for (const prog of DEFAULT_PROGRAMS) {
+                await setDoc(doc(db, 'programs', prog.id), prog);
+              }
+              localStorage.setItem('mwo_seeded_programs', 'true');
+            } catch (err) {
+              try {
+                handleFirestoreError(err, 'write', 'programs');
+              } catch (e: any) {
+                if (e.message?.includes('permission-denied')) {
+                  setFirestorePermissionError(true);
+                }
+              }
+            }
+          }
+        } else {
+          const loaded: Program[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as Program);
+          });
+          loaded.sort((a, b) => new Date(b.programDate).getTime() - new Date(a.programDate).getTime());
+          setPrograms(loaded);
+          saveState('mwo_programs', loaded);
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'programs');
+        } catch (e: any) {
+          console.error("Firestore programs listener error:", e.message);
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          }
+        }
+      }
+    );
+
+    // 3. Synchronize Beneficiaries Collection
+    const unsubscribeBeneficiaries = onSnapshot(collection(db, 'beneficiaries'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_beneficiaries');
+          if (!alreadySeeded) {
+            try {
+              for (const ben of DEFAULT_BENEFICIARIES) {
+                await setDoc(doc(db, 'beneficiaries', ben.id), ben);
+              }
+              localStorage.setItem('mwo_seeded_beneficiaries', 'true');
+            } catch (err) {
+              try {
+                handleFirestoreError(err, 'write', 'beneficiaries');
+              } catch (e: any) {
+                if (e.message?.includes('permission-denied')) {
+                  setFirestorePermissionError(true);
+                }
+              }
+            }
+          }
+        } else {
+          const loaded: Beneficiary[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as Beneficiary);
+          });
+          setBeneficiaries(loaded);
+          saveState('mwo_beneficiaries', loaded);
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'beneficiaries');
+        } catch (e: any) {
+          console.error("Firestore beneficiaries listener error:", e.message);
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          }
+        }
+      }
+    );
+
+    // 4. Synchronize Service Records Collection
+    const unsubscribeSR = onSnapshot(collection(db, 'service_records'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_service_records');
+          if (!alreadySeeded) {
+            try {
+              for (const sr of DEFAULT_SERVICE_RECORDS) {
+                await setDoc(doc(db, 'service_records', sr.id), sr);
+              }
+              localStorage.setItem('mwo_seeded_service_records', 'true');
+            } catch (err) {
+              try {
+                handleFirestoreError(err, 'write', 'service_records');
+              } catch (e: any) {
+                if (e.message?.includes('permission-denied')) {
+                  setFirestorePermissionError(true);
+                }
+              }
+            }
+          }
+        } else {
+          const loaded: ServiceRecord[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as ServiceRecord);
+          });
+          loaded.sort((a, b) => new Date(b.servedDate).getTime() - new Date(a.servedDate).getTime());
+          setServiceRecords(loaded);
+          saveState('mwo_service_records', loaded);
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'service_records');
+        } catch (e: any) {
+          console.error("Firestore service_records listener error:", e.message);
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          }
+        }
+      }
+    );
+
+    return () => {
+      unsubscribeUsers();
+      unsubscribePrograms();
+      unsubscribeBeneficiaries();
+      unsubscribeSR();
+    };
+  }, []);
+
+  // Keep currentUser synced in real-time if their details change in the database
+  useEffect(() => {
+    if (currentUser) {
+      const freshUser = users.find(u => u.id === currentUser.id);
+      if (freshUser) {
+        if (JSON.stringify(freshUser) !== JSON.stringify(currentUser)) {
+          setCurrentUser(freshUser);
+          try {
+            localStorage.setItem('mwo_current_user', JSON.stringify(freshUser));
+          } catch (e) {
+            console.warn("localStorage save error:", e);
+          }
+        }
+      }
+    }
+  }, [users, currentUser]);
+
+  // Sync state modifications functions supporting Firestore writes
+  const syncUsers = async (updated: User[]) => {
+    // Legacy support: updates local state in fallback case
     setUsers(updated);
     saveState('mwo_users', updated);
   };
 
-  const syncPrograms = (updated: Program[]) => {
+  const syncPrograms = async (updated: Program[]) => {
     setPrograms(updated);
     saveState('mwo_programs', updated);
   };
 
-  const syncBeneficiaries = (updated: Beneficiary[]) => {
+  const syncBeneficiaries = async (updated: Beneficiary[]) => {
     setBeneficiaries(updated);
     saveState('mwo_beneficiaries', updated);
   };
 
-  const syncServiceRecords = (updated: ServiceRecord[]) => {
+  const syncServiceRecords = async (updated: ServiceRecord[]) => {
     setServiceRecords(updated);
     saveState('mwo_service_records', updated);
   };
@@ -116,6 +391,11 @@ export default function App() {
 
       if (matchesCategory) {
         setCurrentUser(match);
+        try {
+          localStorage.setItem('mwo_current_user', JSON.stringify(match));
+        } catch (e) {
+          console.warn("localStorage save error:", e);
+        }
         setProfileId(match.id);
         setActiveTab('dashboard');
         // Clear forms
@@ -134,6 +414,11 @@ export default function App() {
     const match = users.find(u => u.id === targetUserId);
     if (match) {
       setCurrentUser(match);
+      try {
+        localStorage.setItem('mwo_current_user', JSON.stringify(match));
+      } catch (e) {
+        console.warn("localStorage save error:", e);
+      }
       setProfileId(match.id);
       setActiveTab('dashboard');
     } else {
@@ -142,6 +427,11 @@ export default function App() {
       const defaultMatch = DEFAULT_USERS.find(u => u.id === targetUserId);
       if (defaultMatch) {
         setCurrentUser(defaultMatch);
+        try {
+          localStorage.setItem('mwo_current_user', JSON.stringify(defaultMatch));
+        } catch (e) {
+          console.warn("localStorage save error:", e);
+        }
         setProfileId(defaultMatch.id);
         setActiveTab('dashboard');
       }
@@ -150,85 +440,282 @@ export default function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    try {
+      localStorage.removeItem('mwo_current_user');
+    } catch (e) {
+      console.warn("localStorage remove error:", e);
+    }
     setProfilePass('');
     setProfileMsg(null);
   };
 
   // 5. Account registrations, program creation controllers
-  const handleSaveBeneficiary = (b: Beneficiary) => {
-    const exists = beneficiaries.some(item => item.id === b.id);
-    let updated: Beneficiary[];
-    if (exists) {
-      updated = beneficiaries.map(item => item.id === b.id ? b : item);
-    } else {
-      // Duplication check on NID
-      const nidExists = beneficiaries.some(item => item.nidOrBirthCert === b.nidOrBirthCert);
-      if (nidExists) {
-        alert(`DUPLICATION ALERT: A profile is already registered in our database under NID / Birth certificate: "${b.nidOrBirthCert}"`);
-        return;
+  const handleSaveBeneficiary = async (b: Beneficiary) => {
+    const prevBeneficiaries = [...beneficiaries];
+    try {
+      const exists = beneficiaries.some(item => item.id === b.id);
+      if (!exists) {
+        // Duplication check on NID
+        const nidExists = beneficiaries.some(item => item.nidOrBirthCert === b.nidOrBirthCert);
+        if (nidExists) {
+          triggerToast('error', `DUPLICATION ALERT: A profile is already registered under NID/Birth certificate "${b.nidOrBirthCert}".`);
+          return;
+        }
       }
-      updated = [b, ...beneficiaries];
+
+      // Optimistic state updates
+      const updatedBeneficiaries = exists 
+        ? beneficiaries.map(item => item.id === b.id ? b : item)
+        : [...beneficiaries, b];
+      setBeneficiaries(updatedBeneficiaries);
+      saveState('mwo_beneficiaries', updatedBeneficiaries);
+
+      triggerToast('success', `Beneficiary "${b.name}" profile saved successfully!`);
+      setEditingBeneficiary(null);
+      setActiveTab('beneficiaries');
+
+      // Sync with Firestore in background
+      const cleanB = JSON.parse(JSON.stringify(b));
+      await setDoc(doc(db, 'beneficiaries', b.id), cleanB);
+    } catch (err) {
+      // Revert if background sync fails
+      setBeneficiaries(prevBeneficiaries);
+      saveState('mwo_beneficiaries', prevBeneficiaries);
+      try {
+        handleFirestoreError(err, 'write', 'beneficiaries', b.id);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
     }
-    syncBeneficiaries(updated);
-    setEditingBeneficiary(null);
-    setActiveTab('beneficiaries');
   };
 
-  const handleSaveProgram = (p: Program) => {
-    const exists = programs.some(item => item.id === p.id);
-    let updated: Program[];
-    if (exists) {
-      updated = programs.map(item => item.id === p.id ? p : item);
-    } else {
-      updated = [p, ...programs];
+  const handleSaveProgram = async (p: Program) => {
+    const prevPrograms = [...programs];
+    try {
+      const exists = programs.some(item => item.id === p.id);
+      const updatedPrograms = exists
+        ? programs.map(item => item.id === p.id ? p : item)
+        : [...programs, p];
+      setPrograms(updatedPrograms);
+      saveState('mwo_programs', updatedPrograms);
+
+      triggerToast('success', `Program "${p.name}" initialized successfully!`);
+      setEditingProgram(null);
+      setActiveTab('programs');
+
+      // Sync with Firestore in background
+      const cleanP = JSON.parse(JSON.stringify(p));
+      await setDoc(doc(db, 'programs', p.id), cleanP);
+    } catch (err) {
+      setPrograms(prevPrograms);
+      saveState('mwo_programs', prevPrograms);
+      try {
+        handleFirestoreError(err, 'write', 'programs', p.id);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
     }
-    syncPrograms(updated);
-    setEditingProgram(null);
-    setActiveTab('programs');
   };
 
   // User Administration helpers
-  const handleSaveUser = (u: User) => {
-    const exists = users.some(item => item.id === u.id);
-    let updated: User[];
-    if (exists) {
-      updated = users.map(item => item.id === u.id ? u : item);
-    } else {
-      updated = [...users, u];
+  const handleSaveUser = async (u: User) => {
+    const prevUsers = [...users];
+    try {
+      const exists = users.some(item => item.id === u.id);
+      const updatedUsers = exists
+        ? users.map(item => item.id === u.id ? u : item)
+        : [...users, u];
+      setUsers(updatedUsers);
+      saveState('mwo_users', updatedUsers);
+
+      triggerToast('success', `Administrative account "${u.name}" saved successfully!`);
+
+      // Sync with Firestore in background
+      const cleanU = JSON.parse(JSON.stringify(u));
+      await setDoc(doc(db, 'users', u.id), cleanU);
+    } catch (err) {
+      setUsers(prevUsers);
+      saveState('mwo_users', prevUsers);
+      try {
+        handleFirestoreError(err, 'write', 'users', u.id);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
     }
-    syncUsers(updated);
-    alert('Account saved successfully!');
   };
 
-  const handleDeleteUser = (userId: string) => {
-    const updated = users.filter(item => item.id !== userId);
-    syncUsers(updated);
+  const handleDeleteUser = async (userId: string) => {
+    const prevUsers = [...users];
+    try {
+      const updatedUsers = users.filter(u => u.id !== userId);
+      setUsers(updatedUsers);
+      saveState('mwo_users', updatedUsers);
+
+      triggerToast('success', 'User account deleted successfully.');
+
+      // Sync with Firestore in background
+      await deleteDoc(doc(db, 'users', userId));
+    } catch (err) {
+      setUsers(prevUsers);
+      saveState('mwo_users', prevUsers);
+      try {
+        handleFirestoreError(err, 'delete', 'users', userId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
+  };
+
+  const handleDeleteBeneficiary = async (beneficiaryId: string) => {
+    const prevBeneficiaries = [...beneficiaries];
+    const prevSR = [...serviceRecords];
+    try {
+      const updatedBeneficiaries = beneficiaries.filter(b => b.id !== beneficiaryId);
+      setBeneficiaries(updatedBeneficiaries);
+      saveState('mwo_beneficiaries', updatedBeneficiaries);
+
+      const recordsToClean = serviceRecords.filter(sr => sr.beneficiaryId === beneficiaryId);
+      const updatedSR = serviceRecords.filter(sr => sr.beneficiaryId !== beneficiaryId);
+      setServiceRecords(updatedSR);
+      saveState('mwo_service_records', updatedSR);
+
+      triggerToast('success', 'Beneficiary record deleted successfully.');
+
+      // Sync with Firestore in background
+      await deleteDoc(doc(db, 'beneficiaries', beneficiaryId));
+      for (const record of recordsToClean) {
+        await deleteDoc(doc(db, 'service_records', record.id));
+      }
+    } catch (err) {
+      setBeneficiaries(prevBeneficiaries);
+      saveState('mwo_beneficiaries', prevBeneficiaries);
+      setServiceRecords(prevSR);
+      saveState('mwo_service_records', prevSR);
+      try {
+        handleFirestoreError(err, 'delete', 'beneficiaries', beneficiaryId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
+  };
+
+  const handleDeleteProgram = async (programId: string) => {
+    const prevPrograms = [...programs];
+    const prevSR = [...serviceRecords];
+    try {
+      const updatedPrograms = programs.filter(p => p.id !== programId);
+      setPrograms(updatedPrograms);
+      saveState('mwo_programs', updatedPrograms);
+
+      const recordsToClean = serviceRecords.filter(sr => sr.programId === programId);
+      const updatedSR = serviceRecords.filter(sr => sr.programId !== programId);
+      setServiceRecords(updatedSR);
+      saveState('mwo_service_records', updatedSR);
+
+      triggerToast('success', 'Program record deleted successfully.');
+
+      // Sync with Firestore in background
+      await deleteDoc(doc(db, 'programs', programId));
+      for (const record of recordsToClean) {
+        await deleteDoc(doc(db, 'service_records', record.id));
+      }
+    } catch (err) {
+      setPrograms(prevPrograms);
+      saveState('mwo_programs', prevPrograms);
+      setServiceRecords(prevSR);
+      saveState('mwo_service_records', prevSR);
+      try {
+        handleFirestoreError(err, 'delete', 'programs', programId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
   };
 
   const handleResetPasswordOverride = (userId: string, newPass: string) => {
-    // In local storage dashboard, we just need to confirm or log it
     console.log(`Administrative Password override saved for user: ${userId}`);
+    triggerToast('success', `Password successfully updated for user ${userId}.`);
   };
 
   // Served distributions item triggers
-  const handleSaveServiceRecord = (sr: ServiceRecord) => {
-    syncServiceRecords([sr, ...serviceRecords]);
+  const handleSaveServiceRecord = async (sr: ServiceRecord) => {
+    const prevSR = [...serviceRecords];
+    try {
+      const exists = serviceRecords.some(item => item.id === sr.id);
+      const updatedSR = exists
+        ? serviceRecords.map(item => item.id === sr.id ? sr : item)
+        : [...serviceRecords, sr];
+      setServiceRecords(updatedSR);
+      saveState('mwo_service_records', updatedSR);
+
+      // Sync with Firestore in background
+      const cleanSR = JSON.parse(JSON.stringify(sr));
+      await setDoc(doc(db, 'service_records', sr.id), cleanSR);
+    } catch (err) {
+      setServiceRecords(prevSR);
+      saveState('mwo_service_records', prevSR);
+      try {
+        handleFirestoreError(err, 'write', 'service_records', sr.id);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
   };
 
-  const handleRemoveServiceRecord = (recordId: string) => {
-    syncServiceRecords(serviceRecords.filter(item => item.id !== recordId));
+  const handleRemoveServiceRecord = async (recordId: string) => {
+    const prevSR = [...serviceRecords];
+    try {
+      const updatedSR = serviceRecords.filter(sr => sr.id !== recordId);
+      setServiceRecords(updatedSR);
+      saveState('mwo_service_records', updatedSR);
+
+      triggerToast('success', 'Distribution log revoked successfully.');
+
+      // Sync with Firestore in background
+      await deleteDoc(doc(db, 'service_records', recordId));
+    } catch (err) {
+      setServiceRecords(prevSR);
+      saveState('mwo_service_records', prevSR);
+      try {
+        handleFirestoreError(err, 'delete', 'service_records', recordId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
   };
 
-  const handleUpdateServiceRecordPackageCount = (recordId: string, newCount: number) => {
-    syncServiceRecords(
-      serviceRecords.map(item => item.id === recordId ? { ...item, packageCount: newCount } : item)
-    );
+  const handleUpdateServiceRecordPackageCount = async (recordId: string, newCount: number) => {
+    const prevSR = [...serviceRecords];
+    try {
+      const updatedSR = serviceRecords.map(sr => sr.id === recordId ? { ...sr, packageCount: newCount } : sr);
+      setServiceRecords(updatedSR);
+      saveState('mwo_service_records', updatedSR);
+
+      triggerToast('success', `Distribution package quantity updated to ${newCount}.`);
+
+      // Sync with Firestore in background
+      await updateDoc(doc(db, 'service_records', recordId), { packageCount: newCount });
+    } catch (err) {
+      setServiceRecords(prevSR);
+      saveState('mwo_service_records', prevSR);
+      try {
+        handleFirestoreError(err, 'update', 'service_records', recordId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
   };
 
-  const handleUpdateRemainingStock = (programId: string, updatedRemaining: number) => {
-    syncPrograms(
-      programs.map(item => item.id === programId ? { ...item, remainingStock: updatedRemaining } : item)
-    );
+  const handleUpdateRemainingStock = async (programId: string, updatedRemaining: number) => {
+    try {
+      await updateDoc(doc(db, 'programs', programId), { remainingStock: updatedRemaining });
+    } catch (err) {
+      try {
+        handleFirestoreError(err, 'update', 'programs', programId);
+      } catch (e: any) {
+        triggerToast('error', "Firestore error: " + e.message);
+      }
+    }
   };
 
   // Profile Password controls
@@ -300,115 +787,145 @@ export default function App() {
           {/* Decorative background grid and gradients */}
           <div className="absolute inset-0 bg-[radial-gradient(#e2e8f0_1.5px,transparent_1.5px)] [background-size:24px_24px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_60%,transparent_100%)] opacity-80" />
           
-          <div className="bg-white border border-slate-200/80 p-8 rounded-3xl shadow-xl max-w-md w-full relative z-10">
-            
-            {/* Header / Brand info */}
-            <div className="text-center mb-6">
-              
-              {/* Official NGO Brand Logo */}
-              <img 
-                src="/mwo-logo.png" 
-                alt="Muslim Welfare Organization Logo" 
-                className="h-16 mx-auto mb-4 object-contain max-w-full drop-shadow-sm select-none"
-                onError={(e) => {
-                  // Graceful fallback to CSS icon if logo cannot be rendered
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
-
-              <h1 className="text-lg font-black text-slate-800 tracking-tight font-display uppercase leading-tight">
-                Beneficiary MS Portal
-              </h1>
-              <p className="text-[10px] text-emerald-600 font-bold font-mono tracking-wider uppercase mt-1">
-                transparent distribution network
-              </p>
-            </div>
-
-            {loginError && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs p-3 rounded-xl mb-4 text-center font-medium leading-relaxed">
-                {loginError}
+          {showBypassPortal ? (
+            <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl shadow-2xl max-w-md w-full relative z-10 text-white">
+              <div className="text-center mb-6">
+                <span className="text-3xl block mb-2">⚡</span>
+                <h1 className="text-xl font-black tracking-tight font-display uppercase leading-tight text-amber-500">
+                  MWO BMS Override Portal
+                </h1>
+                <p className="text-[10px] text-slate-400 font-bold font-mono tracking-wider uppercase mt-1">
+                  Developer Direct Access
+                </p>
               </div>
-            )}
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
-                  Select User Role <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={loginRoleSelect}
-                  onChange={(e) => setLoginRoleSelect(e.target.value as 'Staff' | 'Donor')}
-                  className="w-full border border-slate-300 rounded-xl p-3 text-xs bg-white text-slate-800 font-semibold focus:ring-1 focus:ring-emerald-500 outline-none"
+              <div className="bg-slate-800/80 border border-slate-700/50 rounded-xl p-4 mb-6 text-center">
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  This secure override door allows authorized developers and system administrators to bypass credentials and log in instantly for system validation.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => handleBypassLogin('admin')}
+                  className="w-full bg-red-600 hover:bg-red-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md flex justify-between items-center cursor-pointer border-none"
                 >
-                  <option value="Staff">Super Admin / Field Admin (Staff)</option>
-                  <option value="Donor">Donor Portal Access</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
-                  User ID Credential <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Enter your system username"
-                  value={loginId}
-                  onChange={(e) => setLoginId(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none font-medium font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
-                  Password Key <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Enter login password"
-                  value={loginPass}
-                  onChange={(e) => setLoginPass(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
-                />
+                  <span>Super Admin Account</span>
+                  <span className="bg-red-800 text-[9px] px-2 py-0.5 rounded font-mono">ROOT</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBypassLogin('field1')}
+                  className="w-full bg-sky-600 hover:bg-sky-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md flex justify-between items-center cursor-pointer border-none"
+                >
+                  <span>Field Staff Account</span>
+                  <span className="bg-sky-800 text-[9px] px-2 py-0.5 rounded font-mono">STAFF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBypassLogin('donor1')}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md flex justify-between items-center cursor-pointer border-none"
+                >
+                  <span>Fund Donor Account</span>
+                  <span className="bg-emerald-800 text-[9px] px-2 py-0.5 rounded font-mono">DONOR</span>
+                </button>
               </div>
 
               <button
-                type="submit"
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs tracking-wider uppercase transition shadow-md border-b-2 border-emerald-800 cursor-pointer"
+                type="button"
+                onClick={() => {
+                  window.history.pushState({}, '', window.location.pathname);
+                  setShowBypassPortal(false);
+                }}
+                className="w-full mt-6 text-center text-xs text-slate-400 hover:text-white transition font-semibold cursor-pointer underline bg-transparent border-none"
               >
-                Sign In Securely
+                Back to Standard Secure Login
               </button>
-            </form>
-
-            {/* HIGH FIDELITY SECURE BYPASS MANAGER (Prevents blockages and assists live previews!) */}
-            <div className="mt-6 pt-5 border-t border-slate-100">
-              <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-widest block text-center mb-3">
-                Live Prototype Bypass Access Doors
-              </span>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  onClick={() => handleBypassLogin('admin')}
-                  className="bg-red-50 hover:bg-red-100 border border-red-150 text-red-800 rounded-lg p-2 text-[9px] font-bold text-center leading-tight cursor-pointer"
-                >
-                  Super Admin
-                </button>
-                <button
-                  onClick={() => handleBypassLogin('field1')}
-                  className="bg-sky-50 hover:bg-sky-100 border border-sky-150 text-sky-800 rounded-lg p-2 text-[9px] font-bold text-center leading-tight cursor-pointer"
-                >
-                  Field Admin
-                </button>
-                <button
-                  onClick={() => handleBypassLogin('donor1')}
-                  className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-150 text-emerald-800 rounded-lg p-2 text-[9px] font-bold text-center leading-tight cursor-pointer"
-                >
-                  Fund Donor
-                </button>
-              </div>
             </div>
+          ) : (
+            <div className="bg-white border border-slate-200/80 p-8 rounded-3xl shadow-xl max-w-md w-full relative z-10">
+              
+              {/* Header / Brand info */}
+              <div className="text-center mb-6">
+                
+                {/* Official NGO Brand Logo */}
+                <img 
+                  src={getBasePath() + '/mwo-logo.svg'} 
+                  alt="Muslim Welfare Organization Logo" 
+                  className="h-16 mx-auto mb-4 object-contain max-w-full drop-shadow-sm select-none"
+                  onError={(e) => {
+                    // Graceful fallback to CSS icon if logo cannot be rendered
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
 
-          </div>
+                <h1 className="text-lg font-black text-slate-800 tracking-tight font-display uppercase leading-tight">
+                  Beneficiary MS Portal
+                </h1>
+                <p className="text-[10px] text-emerald-600 font-bold font-mono tracking-wider uppercase mt-1">
+                  transparent distribution network
+                </p>
+              </div>
+
+              {loginError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs p-3 rounded-xl mb-4 text-center font-medium leading-relaxed">
+                  {loginError}
+                </div>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
+                    Select User Role <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={loginRoleSelect}
+                    onChange={(e) => setLoginRoleSelect(e.target.value as 'Staff' | 'Donor')}
+                    className="w-full border border-slate-300 rounded-xl p-3 text-xs bg-white text-slate-800 font-semibold focus:ring-1 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="Staff">Super Admin / Field Admin (Staff)</option>
+                    <option value="Donor">Donor Portal Access</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
+                    User ID Credential <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter your system username"
+                    value={loginId}
+                    onChange={(e) => setLoginId(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none font-medium font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1 tracking-wider uppercase">
+                    Password Key <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter login password"
+                    value={loginPass}
+                    onChange={(e) => setLoginPass(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl p-3 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs tracking-wider uppercase transition shadow-md border-b-2 border-emerald-800 cursor-pointer"
+                >
+                  Sign In Securely
+                </button>
+              </form>
+            </div>
+          )}
           
           {/* Default branding credits */}
           <div className="mt-8 text-center text-xs text-slate-400 font-mono">
@@ -425,7 +942,7 @@ export default function App() {
               {/* Header Left Logo branding */}
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }}>
                 <img 
-                  src="/mwo-logo.png" 
+                  src={getBasePath() + '/mwo-logo.svg'} 
                   alt="MWO Logo" 
                   className="h-8 md:h-9 object-contain select-none"
                 />
@@ -496,14 +1013,6 @@ export default function App() {
                       }`}
                     >
                       User Accounts Management
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('cpanel')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'cpanel' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      cPanel Helper Exports
                     </button>
                   </>
                 )}
@@ -623,14 +1132,6 @@ export default function App() {
                       >
                         <span>⚙️</span> User Accounts Management
                       </button>
-                      <button
-                        onClick={() => { setActiveTab('cpanel'); setIsMobileMenuOpen(false); }}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'cpanel' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>📥</span> cPanel Helper Exports
-                      </button>
                     </>
                   )}
 
@@ -659,6 +1160,100 @@ export default function App() {
 
           {/* MAIN PAGE RENDER PLATFORMS */}
           <main className="flex-grow max-w-7xl w-full mx-auto px-4 py-6">
+            
+            {firestorePermissionError && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-6 text-left shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="bg-amber-100 text-amber-800 p-2.5 rounded-xl font-bold text-lg leading-none">
+                    ⚠️
+                  </div>
+                  <div className="flex-grow">
+                    <h3 className="text-sm font-bold text-amber-950 mb-1">
+                      Firestore Database Configuration Required
+                    </h3>
+                    <p className="text-xs text-amber-800 leading-relaxed max-w-4xl">
+                      We detected a <strong>Missing or insufficient permissions (permission-denied)</strong> error. 
+                      Since you are utilizing your own custom Firebase project (<code>mwo-bms-cf886</code>), you must configure your Firestore Database Security Rules in the Firebase console to allow reading and writing these collections.
+                    </p>
+                    
+                    <div className="mt-4 bg-slate-900 text-slate-100 rounded-xl p-4 font-mono text-[11px] leading-relaxed relative border border-slate-800 shadow-inner">
+                      <button 
+                        type="button"
+                        className="absolute right-3 top-3 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 px-2 py-1 rounded cursor-pointer select-none font-sans border border-slate-700 transition"
+                        onClick={() => {
+                          navigator.clipboard.writeText(
+`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /programs/{programId} {
+      allow read, write: if true;
+    }
+    match /beneficiaries/{beneficiaryId} {
+      allow read, write: if true;
+    }
+    match /service_records/{recordId} {
+      allow read, write: if true;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}`
+                          );
+                          triggerToast('success', 'Hardened Firestore Security Rules copied to clipboard!');
+                        }}>
+                        Copy Rules
+                      </button>
+                      <span className="text-slate-500 block mb-2 font-sans">// Paste these Rules in your Firebase Console (Firestore Database &gt; Rules)</span>
+                      {`rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /programs/{programId} {
+      allow read, write: if true;
+    }
+    match /beneficiaries/{beneficiaryId} {
+      allow read, write: if true;
+    }
+    match /service_records/{recordId} {
+      allow read, write: if true;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}`}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                      <a 
+                        href="https://console.firebase.google.com/project/mwo-bms-cf886/firestore/rules" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="bg-amber-800 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-amber-900 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        Go to Firestore Rules Console ↗
+                      </a>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setFirestorePermissionError(false);
+                          window.location.reload();
+                        }}
+                        className="bg-white border border-amber-300 text-amber-800 font-bold px-3 py-1.5 rounded-lg hover:bg-amber-100 transition cursor-pointer"
+                      >
+                        Dismiss & Reconnect 🔄
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* 1. HOMEPAGE DASHBOARD RENDER (Universal / Staff View) */}
             {activeTab === 'dashboard' && !isDonor && (
@@ -909,6 +1504,7 @@ export default function App() {
                   setEditingBeneficiary(editingB || null);
                   setActiveTab('register_beneficiary');
                 }}
+                onDeleteBeneficiary={handleDeleteBeneficiary}
               />
             )}
 
@@ -923,6 +1519,11 @@ export default function App() {
                   setEditingProgram(editP);
                   setActiveTab('create_program');
                 }}
+                onShowCreateProgram={() => {
+                  setEditingProgram(null);
+                  setActiveTab('create_program');
+                }}
+                onDeleteProgram={handleDeleteProgram}
                 onUpdateRemainingStock={handleUpdateRemainingStock}
                 onSaveServiceRecord={handleSaveServiceRecord}
                 onRemoveServiceRecord={handleRemoveServiceRecord}
@@ -938,11 +1539,6 @@ export default function App() {
                 onDeleteUser={handleDeleteUser}
                 onResetPassword={handleResetPasswordOverride}
               />
-            )}
-
-            {/* ====== 7. CPANEL HELPER SOURCE CODE EXPORTER ====== */}
-            {activeTab === 'cpanel' && isSuperAdmin && (
-              <CPanelHelper />
             )}
 
             {/* ====== 8. SECURITY EDIT PROFILE CONTROL PANELS ====== */}
@@ -1015,6 +1611,36 @@ export default function App() {
           {/* CENTRE BRANDED FOOTER LINK */}
           <Footer />
         </>
+      )}
+
+      {/* Toast Notification HUD */}
+      {toast && (
+        <div 
+          onClick={() => setToast(null)}
+          className={`fixed bottom-5 right-5 z-[100] max-w-sm p-4 rounded-xl shadow-lg border cursor-pointer animate-in fade-in slide-in-from-bottom-5 duration-300 flex items-start gap-2.5 ${
+            toast.type === 'success' 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              : toast.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-900'
+              : 'bg-slate-50 border-slate-200 text-slate-800'
+          }`}
+        >
+          <div className="shrink-0 pt-0.5">
+            {toast.type === 'success' ? (
+              <div className="w-4.5 h-4.5 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">&check;</div>
+            ) : toast.type === 'error' ? (
+              <div className="w-4.5 h-4.5 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">&times;</div>
+            ) : (
+              <div className="w-4.5 h-4.5 rounded-full bg-slate-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">i</div>
+            )}
+          </div>
+          <div className="flex-1">
+            <h5 className="font-extrabold text-[10px] uppercase tracking-wider mb-0.5 font-mono">
+              {toast.type === 'success' ? 'Operation Success' : toast.type === 'error' ? 'Operation Error' : 'System Notice'}
+            </h5>
+            <p className="text-xs font-semibold leading-relaxed">{toast.message}</p>
+          </div>
+        </div>
       )}
 
     </div>

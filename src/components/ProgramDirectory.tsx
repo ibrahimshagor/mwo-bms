@@ -14,6 +14,8 @@ interface ProgramDirectoryProps {
   beneficiaries: Beneficiary[];
   serviceRecords: ServiceRecord[];
   onShowEditProgram: (program: Program) => void;
+  onShowCreateProgram?: () => void;
+  onDeleteProgram?: (programId: string) => void;
   onUpdateRemainingStock: (programId: string, updatedRemaining: number) => void;
   onSaveServiceRecord: (record: ServiceRecord) => void;
   onRemoveServiceRecord: (recordId: string) => void;
@@ -26,6 +28,8 @@ export default function ProgramDirectory({
   beneficiaries,
   serviceRecords,
   onShowEditProgram,
+  onShowCreateProgram,
+  onDeleteProgram,
   onUpdateRemainingStock,
   onSaveServiceRecord,
   onRemoveServiceRecord,
@@ -36,6 +40,14 @@ export default function ProgramDirectory({
   const [activeTab, setActiveTab] = useState<'directory' | 'desk'>('directory');
   const [selectedDeskProgramId, setSelectedDeskProgramId] = useState<string | null>(null);
   const selectedDeskProgram = programs.find((p) => p.id === selectedDeskProgramId) || null;
+  const [deskAlert, setDeskAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showDeskAlert = (type: 'success' | 'error', message: string) => {
+    setDeskAlert({ type, message });
+    setTimeout(() => {
+      setDeskAlert(prev => prev?.message === message ? null : prev);
+    }, 5000);
+  };
 
   // Filter and search directories
   const [searchQuery, setSearchQuery] = useState('');
@@ -50,6 +62,19 @@ export default function ProgramDirectory({
   const [packageCount, setPackageCount] = useState<number>(1);
   const [deskSelectedBeneficiary, setDeskSelectedBeneficiary] = useState<Beneficiary | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+
+  // Active Program Desk suggestions based on search query
+  const deskQuery = deskSearchQuery.trim().toLowerCase();
+  const deskSuggestions = deskQuery
+    ? beneficiaries.filter(b => {
+        return (
+          b.id.toLowerCase().includes(deskQuery) ||
+          b.name.toLowerCase().includes(deskQuery) ||
+          b.nidOrBirthCert.toLowerCase().includes(deskQuery) ||
+          b.mobile.includes(deskQuery)
+        );
+      }).slice(0, 5)
+    : [];
 
   // Filter programs based on user role authorization
   const isDonor = currentUser.role === 'Donor';
@@ -105,19 +130,34 @@ export default function ProgramDirectory({
   const executeDeskSearch = () => {
     if (!deskSearchQuery.trim()) return;
 
-    // Search by unique ID, NID/BirthCertificate
+    // Search by unique ID, NID/BirthCertificate, Name or Mobile
+    const queryStr = deskSearchQuery.trim().toLowerCase();
     const match = beneficiaries.find(
       (b) =>
-        b.id.toLowerCase() === deskSearchQuery.trim().toLowerCase() ||
-        b.nidOrBirthCert.toLowerCase() === deskSearchQuery.trim().toLowerCase()
+        b.id.toLowerCase() === queryStr ||
+        b.nidOrBirthCert.toLowerCase() === queryStr ||
+        b.name.toLowerCase() === queryStr ||
+        b.mobile === queryStr
     );
 
     if (match) {
       checkDuplicationAndSet(match);
     } else {
-      alert(`No registered beneficiary matches ID or NID: "${deskSearchQuery}"`);
-      setDeskSelectedBeneficiary(null);
-      setDuplicateWarning(null);
+      // Fuzzy search fallback
+      const fuzzyMatch = beneficiaries.find(
+        (b) =>
+          b.name.toLowerCase().includes(queryStr) ||
+          b.id.toLowerCase().includes(queryStr) ||
+          b.nidOrBirthCert.toLowerCase().includes(queryStr) ||
+          b.mobile.includes(queryStr)
+      );
+      if (fuzzyMatch) {
+        checkDuplicationAndSet(fuzzyMatch);
+      } else {
+        showDeskAlert('error', `No registered beneficiary matches ID, Name, Mobile, or NID: "${deskSearchQuery}"`);
+        setDeskSelectedBeneficiary(null);
+        setDuplicateWarning(null);
+      }
     }
   };
 
@@ -147,7 +187,7 @@ export default function ProgramDirectory({
     if (!selectedDeskProgram || !deskSelectedBeneficiary) return;
 
     if (selectedDeskProgram.remainingStock < packageCount) {
-      alert(`ERROR: Critical low stock! Selected portion contains ${packageCount} items, but program inventory only has ${selectedDeskProgram.remainingStock} items left.`);
+      showDeskAlert('error', `ERROR: Critical low stock! Selected portion contains ${packageCount} items, but program inventory only has ${selectedDeskProgram.remainingStock} items left.`);
       return;
     }
 
@@ -167,7 +207,7 @@ export default function ProgramDirectory({
     onUpdateRemainingStock(selectedDeskProgram.id, updatedRemaining);
 
     // Reset selectors
-    alert(`Success! ${deskSelectedBeneficiary.name} is marked as Served with ${packageCount} distribution packages.`);
+    showDeskAlert('success', `Success! ${deskSelectedBeneficiary.name} is marked as Served with ${packageCount} distribution packages.`);
     setDeskSelectedBeneficiary(null);
     setDeskSearchQuery('');
     setPackageCount(1); // Reset package allocation choice back to 1 for the next beneficiary
@@ -187,14 +227,14 @@ export default function ProgramDirectory({
   };
 
   // Edit distribution serve package count
-  const handleEditPackageCount = (record: ServiceRecord, newStringCount: string) => {
+  const handleEditPackageCount = (record: ServiceRecord, newCount: number) => {
     if (!selectedDeskProgram) return;
-    const newCount = parseInt(newStringCount) || 1;
+    if (newCount < 1) return;
 
     // Calculate stock variance
     const stockVariance = newCount - record.packageCount;
     if (selectedDeskProgram.remainingStock < stockVariance) {
-      alert("ERROR: Insufficient inventory space to make changes!");
+      showDeskAlert('error', "ERROR: Insufficient inventory space to make changes!");
       return;
     }
 
@@ -217,10 +257,21 @@ export default function ProgramDirectory({
       {activeTab === 'directory' && (
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 pb-3 border-b border-slate-150 mb-4 uppercase tracking-wider font-display">
-              <Layers className="w-4.5 h-4.5 text-emerald-600" />
-              {isDonor ? 'Assigned Distributions Dashboard' : 'Global Programs Directory Area'}
-            </h3>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-150 mb-4">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wider font-display">
+                <Layers className="w-4.5 h-4.5 text-emerald-600" />
+                {isDonor ? 'Assigned Distributions Dashboard' : 'Global Programs Directory Area'}
+              </h3>
+              {currentUser.role === 'SuperAdmin' && onShowCreateProgram && (
+                <button
+                  onClick={onShowCreateProgram}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-1.5 px-3.5 rounded-xl flex items-center gap-1 cursor-pointer shadow-xs transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Launch New Program
+                </button>
+              )}
+            </div>
 
             {/* Filter control bar */}
             <div className="flex flex-col sm:flex-row gap-3.5 mb-5">
@@ -348,14 +399,31 @@ export default function ProgramDirectory({
                           )}
                         </div>
                         
-                        {/* Super Admin edit trigger */}
+                        {/* Super Admin edit and delete trigger */}
                         {currentUser.role === 'SuperAdmin' && (
-                          <button
-                            onClick={() => onShowEditProgram(p)}
-                            className="w-full text-center text-[9px] font-bold text-amber-700 hover:text-amber-800 pt-0.5"
-                          >
-                            Edit parameters info &amp; donor links
-                          </button>
+                          <div className="flex justify-center gap-2 pt-1.5 border-t border-slate-100/50 mt-1">
+                            <button
+                              onClick={() => onShowEditProgram(p)}
+                              className="text-[9.5px] font-bold text-amber-700 hover:text-amber-800 cursor-pointer"
+                            >
+                              Edit details &amp; links
+                            </button>
+                            {onDeleteProgram && (
+                              <>
+                                <span className="text-slate-300 text-[9.5px]">|</span>
+                                <button
+                                  onClick={() => {
+                                    if (confirm(`Are you absolutely sure you want to delete program "${p.name}"? This will permanently wipe out all registered logs of distributions served under this project.`)) {
+                                      onDeleteProgram(p.id);
+                                    }
+                                  }}
+                                  className="text-[9.5px] font-bold text-rose-600 hover:text-rose-750 cursor-pointer"
+                                >
+                                  Delete Program
+                                </button>
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -368,7 +436,7 @@ export default function ProgramDirectory({
       )}
 
       {/* 2. SPECIFIC PROGRAM ADMIN DESK panel */}
-      {activeTab === 'desk' && selectedDeskProgram && (
+       {activeTab === 'desk' && selectedDeskProgram && (
         <div className="space-y-6">
           
           {/* Back trigger card header */}
@@ -403,6 +471,21 @@ export default function ProgramDirectory({
             </div>
           </div>
 
+          {deskAlert && (
+            <div className={`border text-xs font-semibold px-4 py-3 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-250 ${
+              deskAlert.type === 'success' 
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}>
+              {deskAlert.type === 'success' ? (
+                <span className="w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0">&check;</span>
+              ) : (
+                <span className="w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0">&times;</span>
+              )}
+              <span className="flex-1">{deskAlert.message}</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
             
             {/* Left Portion: Verification & distribution allocation fields (7 span columns) */}
@@ -417,16 +500,16 @@ export default function ProgramDirectory({
               </div>
 
               {/* Verified Identity Search Controls */}
-              <div className="space-y-3">
+              <div className="space-y-3 relative pb-1">
                 <label className="block text-xs font-semibold text-slate-600">
-                  Verify Unique ID or NID / Birth Certificate number
+                  Verify by Name, Contact, NID or Unique ID
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={deskSearchQuery}
                     onChange={(e) => setDeskSearchQuery(e.target.value)}
-                    placeholder="e.g. MWO-BEN-XXXXX or NID digits..."
+                    placeholder="Type Name, Mobile, NID or ID digits..."
                     className="flex-grow border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 font-mono uppercase focus:ring-1 focus:ring-emerald-500 outline-none"
                   />
                   <button
@@ -443,6 +526,33 @@ export default function ProgramDirectory({
                     <Scan className="w-5 h-5" />
                   </button>
                 </div>
+
+                {/* Recommendations list dropdown */}
+                {deskSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto divide-y divide-slate-150">
+                    {deskSuggestions.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => {
+                          setDeskSearchQuery(b.id);
+                          checkDuplicationAndSet(b);
+                        }}
+                        className="w-full text-left p-3 hover:bg-slate-50 transition flex justify-between items-center text-xs cursor-pointer"
+                      >
+                        <div className="leading-tight">
+                          <span className="font-bold text-slate-800 block">{b.name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            ID: {b.id} &bull; Contact: {b.mobile}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono bg-emerald-50 text-emerald-800 px-2 py-0.5 border border-emerald-110 rounded font-bold uppercase">
+                          NID: {b.nidOrBirthCert}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Double scan duplication alert warnings */}
@@ -568,18 +678,30 @@ export default function ProgramDirectory({
 
                           {/* Quick Edit triggers */}
                           <div className="flex flex-col gap-1 items-end pt-0.5">
-                            <select
-                              value={sr.packageCount}
-                              onChange={(e) => handleEditPackageCount(sr, e.target.value)}
-                              className="border border-slate-200 bg-white rounded p-1 text-[10px] font-mono outline-none cursor-pointer"
-                              title="Modify count portion"
-                            >
-                              <option value="1">1 Pack</option>
-                              <option value="2">2 Packs</option>
-                              <option value="3">3 Packs</option>
-                              <option value="4">4 Packs</option>
-                              <option value="5">5 Packs</option>
-                            </select>
+                            <span className="text-[9px] text-slate-400 font-bold uppercase mb-1">Portion Count</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleEditPackageCount(sr, sr.packageCount - 1)}
+                                disabled={sr.packageCount <= 1}
+                                className="w-6 h-6 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center rounded font-extrabold text-xs disabled:opacity-30 cursor-pointer shadow-sm"
+                                title="Decrease allocation"
+                              >
+                                -
+                              </button>
+                              <span className="w-5 text-center font-mono font-bold text-xs text-slate-800">
+                                {sr.packageCount}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleEditPackageCount(sr, sr.packageCount + 1)}
+                                disabled={selectedDeskProgram.remainingStock <= 0}
+                                className="w-6 h-6 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center rounded font-extrabold text-xs disabled:opacity-30 cursor-pointer shadow-sm"
+                                title="Increase allocation"
+                              >
+                                +
+                              </button>
+                            </div>
 
                             <button
                               onClick={() => handleUndoServe(sr)}
@@ -613,7 +735,7 @@ export default function ProgramDirectory({
                   onMatchFound={(b) => handleFaceScannerMatch(b)}
                   onNoMatchFound={(frame) => {
                     setDeskFaceScanOpen(false);
-                    alert("No matching profiles detected. Register this beneficiary inside global directory first!");
+                    showDeskAlert('error', "No matching profiles detected. Register this beneficiary inside global directory first!");
                   }}
                 />
               </div>

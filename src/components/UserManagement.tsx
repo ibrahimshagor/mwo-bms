@@ -28,6 +28,7 @@ export default function UserManagement({
   const [resettingUserId, setResettingUserId] = useState<string | null>(null);
   const [newPasswordValue, setNewPasswordValue] = useState('');
   const [passChangeSuccess, setPassChangeSuccess] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const handleExportUsers = () => {
     try {
@@ -65,8 +66,9 @@ export default function UserManagement({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!userId.trim()) return alert('Unique User ID is required.');
-    if (!name.trim()) return alert('Profile username is required.');
+    setFormError(null);
+    if (!userId.trim()) { setFormError('Unique User ID is required.'); return; }
+    if (!name.trim()) { setFormError('Profile username is required.'); return; }
 
     // Save
     onSaveUser({
@@ -104,6 +106,13 @@ export default function UserManagement({
           </h3>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {formError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold p-2.5 rounded-xl flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1 duration-250">
+                <span className="w-3.5 h-3.5 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-[9px] shrink-0">&times;</span>
+                <span className="flex-1">{formError}</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-[10px] font-bold text-slate-600 mb-1 tracking-wider uppercase">
                 Account Type / Security Role <span className="text-red-500">*</span>

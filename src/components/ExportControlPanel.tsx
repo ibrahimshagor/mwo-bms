@@ -17,6 +17,32 @@ interface ExportControlPanelProps {
   variant?: 'card' | 'bar' | 'compact';
 }
 
+// Safe localStorage utilities to prevent crashing in sandboxed iframes
+const safeGetItem = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    console.warn(`localStorage getItem failed for key "${key}":`, e);
+    return null;
+  }
+};
+
+const safeSetItem = (key: string, value: string): void => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.warn(`localStorage setItem failed for key "${key}":`, e);
+  }
+};
+
+const safeRemoveItem = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`localStorage removeItem failed for key "${key}":`, e);
+  }
+};
+
 export default function ExportControlPanel({
   programs,
   beneficiaries,
@@ -31,12 +57,21 @@ export default function ExportControlPanel({
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   
+  // Manual API token state (pre-seeded with the user's provided token)
+  const [useManualToken, setUseManualToken] = useState<boolean>(() => {
+    return safeGetItem('mwo_use_manual_token') === 'true'; // Default to false (OAuth popups enabled now)
+  });
+  const [manualToken, setManualToken] = useState<string>(() => {
+    return safeGetItem('mwo_manual_google_sheets_token') || '';
+  });
+  const [showTokenInput, setShowTokenInput] = useState<boolean>(true);
+
   // Spreadsheet sync feedback
   const [spreadsheetUrl, setSpreadsheetUrl] = useState<string | null>(() => {
-    return localStorage.getItem('mwo_connected_sheets_url');
+    return safeGetItem('mwo_connected_sheets_url');
   });
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(() => {
-    return localStorage.getItem('mwo_last_synced_time');
+    return safeGetItem('mwo_last_synced_time');
   });
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -56,6 +91,17 @@ export default function ExportControlPanel({
       if (unsubscribe) unsubscribe();
     };
   }, []);
+
+  // Save manual token to localStorage when it changes
+  const saveManualTokenLocally = (token: string) => {
+    setManualToken(token);
+    safeSetItem('mwo_manual_google_sheets_token', token);
+  };
+
+  const handleToggleManualOverride = (checked: boolean) => {
+    setUseManualToken(checked);
+    safeSetItem('mwo_use_manual_token', String(checked));
+  };
 
   // Handle local excel file export (instant & offline)
   const handleLocalExport = () => {
@@ -77,11 +123,18 @@ export default function ExportControlPanel({
       if (result) {
         setGoogleUser(result.user);
         setAuthToken(result.accessToken);
+        setUseManualToken(false);
+        safeSetItem('mwo_use_manual_token', 'false');
         showTemporaryMsg('success', `Success! Connected as ${result.user.displayName || result.user.email}`);
       }
     } catch (err: any) {
       console.error("Google Auth connection aborted or failed:", err);
-      showTemporaryMsg('error', err.message || 'Google Authentication cancelled or failed.');
+      const isUnauthorizedDomain = err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain');
+      if (isUnauthorizedDomain) {
+        showTemporaryMsg('error', 'Firebase Auth Security Blocked (auth/unauthorized-domain): Your custom domain "mwo.org.bd" must be whitelisted. To resolve this: 1. Go to Firebase Console (https://console.firebase.google.com/project/mwo-bms-cf886/authentication/providers) 2. Click on the "Settings" tab 3. Go to "Authorized domains" 4. Click "Add domain" and enter "mwo.org.bd".');
+      } else {
+        showTemporaryMsg('error', err.message || 'Google Authentication cancelled or failed. Please use the Manual Token input instead.');
+      }
     } finally {
       setIsConnecting(false);
     }
@@ -98,8 +151,8 @@ export default function ExportControlPanel({
       setAuthToken(null);
       setSpreadsheetUrl(null);
       setLastSyncedTime(null);
-      localStorage.removeItem('mwo_connected_sheets_url');
-      localStorage.removeItem('mwo_last_synced_time');
+      safeRemoveItem('mwo_connected_sheets_url');
+      safeRemoveItem('mwo_last_synced_time');
       showTemporaryMsg('success', 'Google Session disconnected safely.');
     } catch (err: any) {
       showTemporaryMsg('error', err.message || 'Failed to sign out properly.');
@@ -108,10 +161,20 @@ export default function ExportControlPanel({
 
   // Sync Master to Google Sheets
   const handleSyncToSheets = async () => {
-    const tokenToUse = authToken || getAccessToken();
-    if (!tokenToUse) {
-      showTemporaryMsg('error', 'Authentication credentials expired. Please disconnect and sign in again.');
-      return;
+    let tokenToUse = '';
+    
+    if (useManualToken) {
+      if (!manualToken.trim()) {
+        showTemporaryMsg('error', 'Please enter a valid Google OAuth API Access Token in the manual field.');
+        return;
+      }
+      tokenToUse = manualToken.trim();
+    } else {
+      tokenToUse = authToken || getAccessToken() || '';
+      if (!tokenToUse) {
+        showTemporaryMsg('error', 'No active Google session found. Please sign in or use the manual token override.');
+        return;
+      }
     }
 
     setIsSyncing(true);
@@ -131,13 +194,24 @@ export default function ExportControlPanel({
       const currentTimeString = new Date().toLocaleString();
       setLastSyncedTime(currentTimeString);
       
-      localStorage.setItem('mwo_connected_sheets_url', result.spreadsheetUrl);
-      localStorage.setItem('mwo_last_synced_time', currentTimeString);
+      safeSetItem('mwo_connected_sheets_url', result.spreadsheetUrl);
+      safeSetItem('mwo_last_synced_time', currentTimeString);
 
       showTemporaryMsg('success', 'A dynamic multi-tab spreadsheet is now fully compiled and synchronized in your Google Drive!');
     } catch (err: any) {
       console.error("Spreadsheet compilation error:", err);
-      showTemporaryMsg('error', `Sheets synchronization failed: ${err.message || err}`);
+      let errorMsg = err.message || String(err);
+      
+      const isSheetsDisabled = errorMsg.includes('sheets.googleapis.com') || 
+                              errorMsg.includes('has not been used in project') || 
+                              errorMsg.includes('SERVICE_DISABLED') ||
+                              errorMsg.includes('disabled');
+                              
+      if (isSheetsDisabled) {
+        errorMsg = 'Google Sheets API is currently disabled in your custom Firebase Project "mwo-bms-cf886" (ID: 235773919555). To resolve this: 1. Click this link: https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=235773919555 2. Click the "Enable" button. 3. Also open https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=235773919555 and click the "Enable" button to enable Google Drive access. 4. Wait 1-2 minutes and click "Sync Directory Database" again!';
+      }
+      
+      showTemporaryMsg('error', `Sheets synchronization failed: ${errorMsg}`);
     } finally {
       setIsSyncing(false);
     }
@@ -225,16 +299,20 @@ export default function ExportControlPanel({
       <div className="bg-white border border-slate-150 rounded-xl p-4 shadow-xs">
         <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
           <div className="flex items-start gap-2.5">
-            <div className={`p-2 rounded-lg ${googleUser ? 'bg-sky-50 text-sky-650' : 'bg-slate-100 text-slate-500'}`}>
-              <Cloud className={`w-5 h-5 ${googleUser ? 'animate-pulse' : ''}`} />
+            <div className={`p-2 rounded-lg ${(googleUser || useManualToken) ? 'bg-sky-50 text-sky-650' : 'bg-slate-100 text-slate-500'}`}>
+              <Cloud className={`w-5 h-5 ${(googleUser || (useManualToken && isSyncing)) ? 'animate-pulse' : ''}`} />
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 Google Sheets Remote Cloud Sync 
-                {googleUser && <span className="bg-emerald-550 text-white text-[8px] font-black uppercase px-1.5 py-0.3 rounded border border-emerald-600 tracking-wider">Connected</span>}
+                {(googleUser || useManualToken) && (
+                  <span className="bg-emerald-550 text-white text-[8px] font-black uppercase px-1.5 py-0.3 rounded border border-emerald-600 tracking-wider">
+                    {useManualToken ? 'Token Override Active' : 'Connected'}
+                  </span>
+                )}
               </h4>
               <p className="text-[11px] text-slate-500 max-w-lg mt-0.5 leading-relaxed">
-                Unlock collaborative power! Connect your Google account to automatically spin up a dynamic file containing synced tabs for Dashboard figures, Programs, Beneficiaries, Service Records, and Users.
+                Automatically compile and synchronise dynamic sheets containing synced tabs for Dashboard figures, Programs, Beneficiaries, Service Records, and Users directly to Google Drive.
               </p>
             </div>
           </div>
@@ -276,9 +354,52 @@ export default function ExportControlPanel({
           </div>
         </div>
 
+        {/* Manual Token Control Desk */}
+        <div className="mt-2 mb-4 p-3.5 bg-slate-50 border border-slate-150 rounded-xl">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input 
+              type="checkbox"
+              checked={useManualToken}
+              onChange={(e) => handleToggleManualOverride(e.target.checked)}
+              className="w-4 h-4 text-sky-600 border-slate-300 rounded focus:ring-sky-500 accent-sky-600 cursor-pointer"
+            />
+            <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+              Enable Google Sheets API Token Override
+              <span className="text-[10px] text-slate-400 font-normal">(bypasses sandbox/iframe restrictions)</span>
+            </span>
+          </label>
+
+          {useManualToken && (
+            <div className="mt-3 pl-6 space-y-2 border-l-2 border-sky-200">
+              <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider">Active API Access Token:</span>
+              <div className="flex items-center gap-2">
+                <input 
+                  type={showTokenInput ? "text" : "password"}
+                  value={manualToken}
+                  onChange={(e) => saveManualTokenLocally(e.target.value)}
+                  placeholder="Paste your Google Access Token here..."
+                  className="bg-white border border-slate-200 rounded-lg text-xs py-1.5 px-3 flex-1 font-mono text-slate-700 focus:outline-none focus:border-sky-500 shadow-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowTokenInput(!showTokenInput)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-extrabold px-2.5 py-1.5 rounded-lg border border-slate-250 cursor-pointer"
+                >
+                  {showTokenInput ? "Hide Token" : "Show Token"}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-normal">
+                Currently running sync with: <code className="bg-slate-150 px-1 py-0.5 rounded font-mono text-[9.5px] text-slate-600">
+                  {manualToken ? `${manualToken.slice(0, 15)}...${manualToken.slice(-15)}` : 'No Token Added'}
+                </code>. Click the synchronization trigger below to test connectivity and generate the spreadsheet instantly.
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* Sync Controls Section */}
-        {googleUser && (
-          <div className="border-t border-slate-100 pt-3 mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 rounded-lg p-3">
+        {(googleUser || useManualToken) && (
+          <div className="border-t border-slate-100 pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 rounded-lg p-3">
             <div className="flex items-center gap-2">
               <button
                 onClick={handleSyncToSheets}

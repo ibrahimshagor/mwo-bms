@@ -34,6 +34,7 @@ export default function BeneficiaryRegister({
   const [photo, setPhoto] = useState('');
   const [signature, setSignature] = useState('');
   const [creatorAdmin, setCreatorAdmin] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Camera capture states
   const [cameraActive, setCameraActive] = useState(false);
@@ -131,8 +132,8 @@ export default function BeneficiaryRegister({
     if (!video) return;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 160;
-    canvas.height = 192; // 1:1.2 vertical portrait ratio
+    canvas.width = 400;
+    canvas.height = 480; // 1:1.2 vertical portrait ratio - high resolution for accurate face recognition
     const ctx = canvas.getContext('2d');
     if (ctx) {
       // Draw reversed image mirror effect only if using front/profile selfie camera
@@ -142,7 +143,7 @@ export default function BeneficiaryRegister({
       }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const dataUri = canvas.toDataURL('image/jpeg');
+      const dataUri = canvas.toDataURL('image/jpeg', 0.9);
       setPhoto(dataUri);
       stopCamera();
     }
@@ -163,11 +164,12 @@ export default function BeneficiaryRegister({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return alert('Beneficiary name is required.');
-    if (!nid.trim()) return alert('NID or Birth Certificate number is required.');
-    if (!signature) return alert('Beneficiary digital signature is required.');
+    setFormError(null);
+    if (!name.trim()) { setFormError('Beneficiary full name is required.'); return; }
+    if (!nid.trim()) { setFormError('National ID / Birth Certificate number is required.'); return; }
+    if (!signature) { setFormError('Beneficiary digital signature is required. Please sign in the pad area.'); return; }
 
-    onSave({
+    const beneficiaryData: Beneficiary = {
       id: id.trim(),
       name: name.trim(),
       type,
@@ -179,10 +181,15 @@ export default function BeneficiaryRegister({
       address: address.trim(),
       photo,
       signature,
-      createdAdmin: creatorAdmin || (currentUser.name || currentUser.id),
-      updatedAdmin: editingBeneficiary ? (currentUser.name || currentUser.id) : undefined,
-      updatedAt: editingBeneficiary ? new Date().toISOString() : undefined
-    });
+      createdAdmin: creatorAdmin || (currentUser.name || currentUser.id)
+    };
+
+    if (editingBeneficiary) {
+      beneficiaryData.updatedAdmin = currentUser.name || currentUser.id;
+      beneficiaryData.updatedAt = new Date().toISOString();
+    }
+
+    onSave(beneficiaryData);
   };
 
   return (
@@ -208,6 +215,13 @@ export default function BeneficiaryRegister({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {formError && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold px-4 py-3 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-250">
+            <span className="w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold text-[10px] shrink-0">&times;</span>
+            <span className="flex-1">{formError}</span>
+          </div>
+        )}
+
         {/* Core demographic grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* Left Column: IDs and Names */}

@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny for all other resources
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Allow public read/write access to support cross-browser, cross-device 
+    // database synchronization for the custom app-level user credential sessions
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+    match /programs/{programId} {
+      allow read, write: if true;
+    }
+    match /beneficiaries/{beneficiaryId} {
+      allow read, write: if true;
+    }
+    match /service_records/{recordId} {
+      allow read, write: if true;
+    }
+  }
+}

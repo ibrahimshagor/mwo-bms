@@ -5,7 +5,7 @@ import FaceScanner from './FaceScanner';
 import * as XLSX from 'xlsx';
 import { 
   Users, Search, Scan, Eye, CreditCard, Edit, Plus, BadgeCheck, UserX, 
-  MapPin, Phone, Calendar, ShieldCheck, Hammer, Download
+  MapPin, Phone, Calendar, ShieldCheck, Hammer, Download, Trash2
 } from 'lucide-react';
 
 interface BeneficiaryDirectoryProps {
@@ -14,6 +14,7 @@ interface BeneficiaryDirectoryProps {
   programs: Program[];
   serviceRecords: ServiceRecord[];
   onShowRegisterForm: (editingB?: Beneficiary) => void;
+  onDeleteBeneficiary?: (id: string) => void;
 }
 
 export default function BeneficiaryDirectory({
@@ -21,7 +22,8 @@ export default function BeneficiaryDirectory({
   beneficiaries,
   programs,
   serviceRecords,
-  onShowRegisterForm
+  onShowRegisterForm,
+  onDeleteBeneficiary
 }: BeneficiaryDirectoryProps) {
   
   // State variables
@@ -277,6 +279,19 @@ export default function BeneficiaryDirectory({
                           title="Edit profile data"
                         >
                           <Edit className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {(currentUser.role === 'SuperAdmin' || currentUser.role === 'FieldAdmin') && onDeleteBeneficiary && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Are you absolutely sure you want to delete beneficiary "${b.name}"? This will permanently erase their biometrics descriptor and record history.`)) {
+                              onDeleteBeneficiary(b.id);
+                            }
+                          }}
+                          className="text-slate-550 hover:text-rose-700 border border-slate-200 p-1.5 rounded hover:bg-rose-50/45 cursor-pointer transition"
+                          title="Delete beneficiary record"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
