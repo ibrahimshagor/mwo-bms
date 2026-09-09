@@ -1,1 +1,51 @@
+name: Build and Deploy Project
 
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-my-site:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build My Site
+        env:
+          VITE_BASE_PATH: ${{ secrets.MY_SUBFOLDER }}
+        run: |
+          npm install
+          npm run build
+      - name: Push to build branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: build
+
+  build-client-site:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Client Site
+        env:
+          VITE_BASE_PATH: ${{ secrets.CLIENT_SUBFOLDER }}
+        run: |
+          npm install
+          npm run build
+      - name: Push to client-build branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: client-build
