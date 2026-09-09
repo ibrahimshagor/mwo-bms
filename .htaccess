@@ -1,0 +1,22 @@
+# Custom Apache configurations for MWO Beneficiary Management System cPanel Deployment
+<IfModule mod_mime.c>
+    AddType application/octet-stream .bin
+    AddType application/json .json
+    AddType image/svg+xml .svg
+</IfModule>
+
+# Prevent cPanel/Apache security filters from blocking neural weights
+<FilesMatch "\.(json|bin|svg|png|ico)$">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</FilesMatch>
+
+# Enable CORS for local static assets
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+</IfModule>

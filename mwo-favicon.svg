@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <!-- Central MWO Flame Emblem -->
+  <g transform="translate(10, 10)">
+    <!-- Left emerald-700 wing -->
+    <path d="M 68,143 C 41,123 20,83 31,52 C 34,44 41,45 43,53 C 48,70 41,92 56,112 C 60,118 64,122 68,125 C 72,118 78,110 84,103 C 74,115 72,130 68,143 Z" fill="#047857" />
+    
+    <!-- Red beak attachment on green wing bottom left -->
+    <path d="M 31,118 C 28,124 32,135 38,145 C 38,137 36,127 31,118 Z" fill="#DC2626" />
+    
+    <!-- Red circle eye with white iris and green pupil -->
+    <circle cx="43" cy="113" r="6" fill="#DC2626" />
+    <circle cx="43" cy="113" r="3.5" fill="#ffffff" />
+    <circle cx="43" cy="113" r="1.5" fill="#047857" />
+    
+    <!-- Central Red flame wing -->
+    <path d="M 115,20 C 130,50 145,85 110,128 C 95,145 78,155 60,158 C 72,140 85,115 88,90 C 91,65 72,45 115,20 Z" fill="#DC2626" />
+    
+    <!-- Bottom right emerald-700 sweeping wing -->
+    <path d="M 94,185 C 120,180 150,155 155,115 C 158,95 155,75 145,62 C 146,75 142,95 133,115 C 124,135 110,155 94,185 Z" fill="#047857" />
+    
+    <!-- Highlight text MWO inside the logo -->
+    <text x="142" y="186" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="900" letter-spacing="-0.5" fill="#DC2626">M<tspan fill="#047857">W</tspan>O</text>
+  </g>
+</svg>
