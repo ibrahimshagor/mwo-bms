@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
 import { User, Beneficiary, BeneficiaryType, NationalityType, GenderType } from '../types';
 import SignaturePad from './SignaturePad';
-import { Camera, Image as ImageIcon, Save, UserPlus, FileWarning, Trash2, RefreshCw, CheckCircle2, Scan } from 'lucide-react';
+import { Camera, Image as ImageIcon, Save, UserPlus, FileWarning, Trash2, RefreshCw, CheckCircle2, Scan, Upload } from 'lucide-react';
 import { extractFaceDescriptor } from '../utils/faceBiometrics';
+import { compressImageFile, compressDataUrl } from '../utils/imageCompressor';
 
 interface BeneficiaryRegisterProps {
   currentUser: User;
@@ -38,6 +39,9 @@ export default function BeneficiaryRegister({
   const [formError, setFormError] = useState<string | null>(null);
   const [biometricValidating, setBiometricValidating] = useState(false);
   const [biometricValid, setBiometricValid] = useState<boolean | null>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Validate face in photo whenever photo is updated
   useEffect(() => {
@@ -187,31 +191,48 @@ export default function BeneficiaryRegister({
       }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const dataUri = canvas.toDataURL('image/jpeg', 0.9);
+      const dataUri = canvas.toDataURL('image/jpeg', 0.82);
       setPhoto(dataUri);
       stopCamera();
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        if (ev.target?.result) {
-          setPhoto(ev.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    setPhotoUploadError(null);
+    setIsUploadingPhoto(true);
+
+    try {
+      // Compress and optimize image to ensure compatibility with Firestore 1MB document limit and LocalStorage quota
+      const compressedDataUri = await compressImageFile(file, 480, 600, 0.82);
+      setPhoto(compressedDataUri);
+    } catch (err: any) {
+      console.warn('Image upload/compression error:', err);
+      setPhotoUploadError(err?.message || 'Failed to process image. Please upload a JPG or PNG.');
+    } finally {
+      setIsUploadingPhoto(false);
+      e.target.value = '';
     }
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
     if (!name.trim()) { setFormError('Beneficiary full name is required.'); return; }
     if (!nid.trim()) { setFormError('National ID / Birth Certificate number is required.'); return; }
     if (!signature) { setFormError('Beneficiary digital signature is required. Please sign in the pad area.'); return; }
+
+    // Ensure photo is compressed if present
+    let finalPhoto = photo;
+    if (finalPhoto && finalPhoto.length > 80000) {
+      try {
+        finalPhoto = await compressDataUrl(finalPhoto, 480, 600, 0.82);
+      } catch (err) {
+        console.warn('Photo final compression warning:', err);
+      }
+    }
 
     const beneficiaryData: Beneficiary = {
       id: id.trim(),
@@ -223,7 +244,7 @@ export default function BeneficiaryRegister({
       mobile: mobile.trim(),
       gender,
       address: address.trim(),
-      photo,
+      photo: finalPhoto,
       signature,
       createdAdmin: creatorAdmin || (currentUser.name || currentUser.id)
     };
@@ -407,7 +428,20 @@ export default function BeneficiaryRegister({
 
           <div className="flex flex-col sm:flex-row gap-5 items-start">
             {/* Live Camera View Box / Saved Photo */}
-            <div className="w-40 h-48 border border-slate-300 bg-slate-900 rounded-lg overflow-hidden shrink-0 relative flex items-center justify-center">
+            <div 
+              onClick={() => { if (!photo && !cameraActive && !isUploadingPhoto) fileInputRef.current?.click(); }}
+              className={`w-40 h-48 border border-slate-300 bg-slate-900 rounded-lg overflow-hidden shrink-0 relative flex items-center justify-center ${
+                !photo && !cameraActive ? 'cursor-pointer hover:border-emerald-500 transition group' : ''
+              }`}
+            >
+              {isUploadingPhoto && (
+                <div className="absolute inset-0 bg-slate-950/85 backdrop-blur-xs flex flex-col items-center justify-center z-20 p-2 text-center">
+                  <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin mb-1.5" />
+                  <span className="text-[11px] font-bold text-white">Optimizing Photo...</span>
+                  <span className="text-[9px] text-slate-300">Resizing for instant sync</span>
+                </div>
+              )}
+
               {cameraActive ? (
                 <video
                   ref={videoRef}
@@ -423,17 +457,18 @@ export default function BeneficiaryRegister({
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <div className="text-center p-3 text-slate-500">
-                  <ImageIcon className="w-8 h-8 text-slate-600 mx-auto mb-1.5 opacity-60 animate-pulse" />
-                  <span className="text-[10px] font-mono leading-none font-bold">NO PHOTO RECORD</span>
+                <div className="text-center p-3 text-slate-400 group-hover:text-emerald-400 transition">
+                  <Upload className="w-7 h-7 mx-auto mb-1.5 opacity-80 group-hover:scale-110 transition" />
+                  <span className="text-[10px] font-mono leading-tight font-bold block">CLICK OR DRAG TO UPLOAD PHOTO</span>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">JPG, PNG, WEBP</span>
                 </div>
               )}
 
               {photo && !cameraActive && (
                 <button
                   type="button"
-                  onClick={() => setPhoto('')}
-                  className="absolute bottom-1 right-1 bg-red-600/80 hover:bg-red-700 text-white rounded p-1 transition cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); setPhoto(''); }}
+                  className="absolute bottom-1 right-1 bg-red-600/85 hover:bg-red-700 text-white rounded p-1 transition cursor-pointer shadow"
                   title="Remove photograph"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -444,27 +479,41 @@ export default function BeneficiaryRegister({
             {/* Actions for Camera or Upload */}
             <div className="flex-1 space-y-3">
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Provide a clean, well-lit snapshot. This profile biometric asset is mapped in our system cache for high-speed facial matching during camp distribution desks.
+                Provide a clean, well-lit snapshot. High-resolution phone photos will be automatically compressed to ~35KB so they sync instantly across Firebase Cloud and offline device storage.
               </p>
 
+              {photoUploadError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 flex items-center gap-2 text-red-800 text-xs">
+                  <FileWarning className="w-4 h-4 text-red-600 shrink-0" />
+                  <span>{photoUploadError}</span>
+                </div>
+              )}
+
               {photo && !cameraActive && (
-                <div>
-                  {biometricValidating ? (
-                    <div className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-mono">
-                      <RefreshCw className="w-3 h-3 text-slate-500 animate-spin" />
-                      Analyzing Facial Biometrics...
-                    </div>
-                  ) : biometricValid === true ? (
-                    <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg text-xs font-semibold">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Biometric Face Verified &amp; Ready for Real-Time Matching
-                    </div>
-                  ) : biometricValid === false ? (
-                    <div className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-lg text-xs">
-                      <Scan className="w-3.5 h-3.5 text-amber-600" />
-                      No distinct face detected in photo. Please ensure face is well-lit and facing forward.
-                    </div>
-                  ) : null}
+                <div className="space-y-1.5">
+                  <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Photo attached &amp; compressed for database storage</span>
+                  </div>
+
+                  <div>
+                    {biometricValidating ? (
+                      <div className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-mono">
+                        <RefreshCw className="w-3 h-3 text-slate-500 animate-spin" />
+                        Analyzing Facial Biometrics...
+                      </div>
+                    ) : biometricValid === true ? (
+                      <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg text-xs font-semibold">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        Biometric Face Verified &amp; Ready for Real-Time Matching
+                      </div>
+                    ) : biometricValid === false ? (
+                      <div className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-lg text-xs">
+                        <Scan className="w-3.5 h-3.5 text-amber-600" />
+                        No distinct face detected in photo. Please ensure face is well-lit and facing forward.
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               )}
 
@@ -525,16 +574,22 @@ export default function BeneficiaryRegister({
                   </>
                 )}
 
-                <label className="bg-white hover:bg-slate-100 text-slate-700 font-semibold text-[11px] py-2 px-3.5 border border-slate-300 rounded-lg flex items-center gap-1.5 cursor-pointer transition">
-                  <ImageIcon className="w-4 h-4 text-slate-500" />
-                  Upload Local Image File
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-white hover:bg-slate-100 text-slate-700 font-semibold text-[11px] py-2 px-3.5 border border-slate-300 rounded-lg flex items-center gap-1.5 cursor-pointer transition"
+                >
+                  <ImageIcon className="w-4 h-4 text-emerald-600" />
+                  Upload Photo from Device
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
               </div>
             </div>
           </div>

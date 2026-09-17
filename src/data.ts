@@ -133,13 +133,13 @@ export const DEFAULT_SERVICE_RECORDS: ServiceRecord[] = [
   }
 ];
 
-// Seed helper functions
+// Storage persistence helper functions with quota protection
 export function getSavedState<T>(key: string, backup: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (raw) return JSON.parse(raw);
   } catch (err) {
-    console.error('Error fetching localStorage key:', key, err);
+    console.warn('Warning fetching localStorage key:', key, err);
   }
   return backup;
 }
@@ -147,7 +147,18 @@ export function getSavedState<T>(key: string, backup: T): T {
 export function saveState<T>(key: string, data: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(data));
-  } catch (err) {
-    console.error('Error writing localStorage key:', key, err);
+  } catch (err: any) {
+    console.warn('LocalStorage write warning for key:', key, err?.message || err);
+    // If quota exceeded, attempt to clear old temporary caches
+    if (err?.name === 'QuotaExceededError' || err?.message?.includes('quota')) {
+      try {
+        // Clear non-critical temporary keys
+        const keysToClean = ['mwo_audit_temp', 'google_access_token_temp'];
+        keysToClean.forEach(k => localStorage.removeItem(k));
+        localStorage.setItem(key, JSON.stringify(data));
+      } catch (retryErr) {
+        console.warn('LocalStorage quota remained full after cache cleanup for key:', key);
+      }
+    }
   }
 }

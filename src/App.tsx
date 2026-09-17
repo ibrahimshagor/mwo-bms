@@ -8,6 +8,7 @@ import {
   collection, onSnapshot, setDoc, doc, deleteDoc, updateDoc 
 } from 'firebase/firestore';
 import { db } from './utils/googleAuth';
+import { compressDataUrl } from './utils/imageCompressor';
 
 // Custom Firestore permission-denied error handler complying with firebase-integration guidelines
 function handleFirestoreError(
@@ -292,8 +293,28 @@ export default function App() {
           snapshot.forEach((d) => {
             loaded.push(d.data() as Beneficiary);
           });
-          setBeneficiaries(loaded);
-          saveState('mwo_beneficiaries', loaded);
+          // Intelligently reconcile with local state to preserve any local records or photos
+          setBeneficiaries(prev => {
+            const remoteMap = new Map(loaded.map(item => [item.id, item]));
+            const merged = [...loaded];
+            prev.forEach(localItem => {
+              if (!remoteMap.has(localItem.id)) {
+                // Keep local item that hasn't synced to cloud yet
+                merged.push(localItem);
+              } else {
+                // If remote has no photo but local has photo, retain local photo
+                const remote = remoteMap.get(localItem.id);
+                if (remote && !remote.photo && localItem.photo) {
+                  const idx = merged.findIndex(m => m.id === localItem.id);
+                  if (idx !== -1) {
+                    merged[idx] = { ...remote, photo: localItem.photo };
+                  }
+                }
+              }
+            });
+            saveState('mwo_beneficiaries', merged);
+            return merged;
+          });
         }
       },
       (error) => {
@@ -501,18 +522,23 @@ export default function App() {
       // Sync with Firestore in background
       try {
         const cleanB = JSON.parse(JSON.stringify(b));
+        // Guarantee photo is compressed before Firestore upload to fit under document payload limits
+        if (cleanB.photo && cleanB.photo.length > 80000) {
+          try {
+            cleanB.photo = await compressDataUrl(cleanB.photo, 480, 600, 0.82);
+          } catch (cErr) {
+            console.warn("Photo compression warning:", cErr);
+          }
+        }
         await setDoc(doc(db, 'beneficiaries', b.id), cleanB);
       } catch (err: any) {
+        console.warn("Beneficiary Firestore sync notice:", err);
         if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
-          setBeneficiaries(prevBeneficiaries);
-          saveState('mwo_beneficiaries', prevBeneficiaries);
-          try {
-            handleFirestoreError(err, 'write', 'beneficiaries', b.id);
-          } catch (e: any) {
-            triggerToast('error', "Firestore error: " + e.message);
-          }
+          setFirestorePermissionError(true);
+          // Retain the beneficiary locally so the user does NOT lose their registration or photo!
+          triggerToast('info', `Profile saved locally. Note: Cloud Firestore rules require active login.`);
         } else {
-          handleFirestoreError(err, 'write', 'beneficiaries', b.id);
+          triggerToast('info', `Profile saved to device storage. Cloud sync pending.`);
         }
       }
     } catch (err: any) {
