@@ -6,9 +6,9 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// Suppress non-fatal connection warnings and offline notices from internal Firestore WebChannel
+// Suppress non-fatal connection warnings from internal Firestore WebChannel
 try {
-  setLogLevel('silent');
+  setLogLevel('error');
 } catch (e) {}
 
 // Initialize Firestore with experimentalForceLongPolling to eliminate WebChannel streaming disconnects/failures in container and proxy environments

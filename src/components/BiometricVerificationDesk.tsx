@@ -95,12 +95,7 @@ export default function BiometricVerificationDesk({
       {scannerOpen && (
         <FaceScanner
           beneficiaries={beneficiaries}
-          onClose={() => {
-            setScannerOpen(false);
-            if (!lastMatch) {
-              onBack();
-            }
-          }}
+          onClose={() => setScannerOpen(false)}
           onMatchFound={(matchedBeneficiary, similarity) => {
             setLastMatch({
               beneficiary: matchedBeneficiary,

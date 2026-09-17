@@ -50,25 +50,31 @@ export async function loadFaceApiModels(
         onProgress?.(20 + i * 25, `Connecting to ${source.name}...`);
         
         const loadWithTimeout = async () => {
-          // Load fast detector for real-time tracking (TinyFaceDetector)
+          // Load fast detector for real-time tracking
           await faceapi.nets.tinyFaceDetector.loadFromUri(source.url);
-          onProgress?.(40, 'Loaded TinyFace Detector CNN');
+          onProgress?.(40, 'Loaded Face Detection CNN');
 
-          // Load 68-point landmark detector
+          // Load 68-point landmark detector (standard)
           await faceapi.nets.faceLandmark68Net.loadFromUri(source.url);
-          onProgress?.(65, 'Loaded 68-Point Landmark Net');
+          onProgress?.(60, 'Loaded 68-Point Landmark Net');
 
-          // Optional tiny landmark fallback
+          // Also load tiny landmark detector if available to prevent any missing model errors
           try {
             await faceapi.nets.faceLandmark68TinyNet.loadFromUri(source.url);
           } catch (e) {
-            // Optional fallback if tiny landmark exists
+            // Optional fallback
           }
 
           // Load 128D deep vector recognition network
           await faceapi.nets.faceRecognitionNet.loadFromUri(source.url);
-          onProgress?.(90, 'Loaded 128D Vector Net');
-          // Heavy models (ssdMobilenetv1, age_gender, face_expression) are intentionally omitted for speed & memory efficiency
+          onProgress?.(85, 'Loaded 128D Vector Net');
+
+          // Try loading SSD MobileNet for high precision (optional)
+          try {
+            await faceapi.nets.ssdMobilenetv1.loadFromUri(source.url);
+          } catch (e) {
+            console.warn('SSD MobileNet skipped, using TinyFaceDetector for precision:', e);
+          }
         };
 
         const timeoutPromise = new Promise((_, reject) =>
@@ -102,9 +108,7 @@ export function areModelsLoaded(): boolean {
 }
 
 /**
- * Extract 128D biometric face descriptor from an image element, video, canvas, or Data URL.
- * Employs multi-tier cascade options so that any photo (even in dim or soft lighting)
- * reliably yields its biometric descriptor vector.
+ * Extract 128D biometric face descriptor from an image element, video, canvas, or Data URL
  */
 export async function extractFaceDescriptor(
   input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | string
@@ -131,12 +135,8 @@ export async function extractFaceDescriptor(
     }
     img.src = input;
     await new Promise((resolve) => {
-      if (img.complete && img.naturalWidth > 0) {
-        resolve(true);
-      } else {
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
-      }
+      img.onload = resolve;
+      img.onerror = resolve;
     });
     if (!img.complete || img.naturalWidth === 0) return null;
     element = img;
@@ -145,37 +145,34 @@ export async function extractFaceDescriptor(
   }
 
   try {
-    if (faceapi.nets.tinyFaceDetector.isLoaded && faceapi.nets.faceRecognitionNet.isLoaded) {
-      // Tier 1: Standard high-speed 320 input size with resilient 0.20 score threshold
-      let result = await faceapi
-        .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 }))
+    // 1. Try high-accuracy SSD MobileNet if available
+    let result = null;
+    try {
+      if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+        result = await faceapi
+          .detectSingleFace(element, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+      }
+    } catch (e) {
+      // Fallback
+    }
+
+    // 2. Fallback to TinyFaceDetector with fine score threshold
+    if (!result && faceapi.nets.tinyFaceDetector.isLoaded) {
+      result = await faceapi
+        .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.25 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
+    }
 
-      // Tier 2: Enhanced detail 416 input size with 0.15 threshold if tier 1 missed
-      if (!result) {
-        result = await faceapi
-          .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.15 }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-      }
-
-      // Tier 3: Compact 224 input size fallback for low-res or compressed webcam images
-      if (!result) {
-        result = await faceapi
-          .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.12 }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-      }
-
-      if (result && result.descriptor) {
-        return {
-          descriptor: result.descriptor,
-          landmarks: result.landmarks,
-          box: result.detection.box,
-          score: result.detection.score,
-        };
-      }
+    if (result && result.descriptor) {
+      return {
+        descriptor: result.descriptor,
+        landmarks: result.landmarks,
+        box: result.detection.box,
+        score: result.detection.score,
+      };
     }
   } catch (err) {
     console.error('[Biometrics] Face extraction error:', err);
@@ -185,105 +182,63 @@ export async function extractFaceDescriptor(
 }
 
 /**
- * Calculate Eye Aspect Ratio (EAR) for blink detection / anti-spoofing
- * EAR = (||p1 - p5|| + ||p2 - p4||) / (2 * ||p0 - p3||)
- */
-export function calculateEyeAspectRatio(eyePoints: faceapi.Point[]): number {
-  if (!eyePoints || eyePoints.length < 6) return 0.3;
-  const p0 = eyePoints[0];
-  const p1 = eyePoints[1];
-  const p2 = eyePoints[2];
-  const p3 = eyePoints[3];
-  const p4 = eyePoints[4];
-  const p5 = eyePoints[5];
-
-  const v1 = Math.hypot(p1.x - p5.x, p1.y - p5.y);
-  const v2 = Math.hypot(p2.x - p4.x, p2.y - p4.y);
-  const h = Math.hypot(p0.x - p3.x, p0.y - p3.y);
-
-  if (h === 0) return 0.3;
-  return (v1 + v2) / (2.0 * h);
-}
-
-/**
- * Check blink status from 68 facial landmarks
- */
-export function evaluateLivenessBlink(landmarks: faceapi.FaceLandmarks68): {
-  leftEar: number;
-  rightEar: number;
-  avgEar: number;
-  isBlink: boolean;
-} {
-  const leftEye = landmarks.getLeftEye();
-  const rightEye = landmarks.getRightEye();
-  const leftEar = calculateEyeAspectRatio(leftEye);
-  const rightEar = calculateEyeAspectRatio(rightEye);
-  const avgEar = (leftEar + rightEar) / 2;
-  const isBlink = avgEar < 0.22;
-
-  return { leftEar, rightEar, avgEar, isBlink };
-}
-
-/**
  * Mathematically map Euclidean distance (0.0 to 1.2+) to intuitive human confidence (0% to 100%)
  * 
- * Calibrated biometric thresholds for real-world field conditions:
- * - Distance < 0.50: Confirmed Match (High Confidence, 90% - 100%)
- * - Distance 0.50 - 0.62: Verified Match (68% - 89%)
- * - Distance 0.62 - 0.72: Low Confidence / Mismatch (40% - 67%)
- * - Distance >= 0.72: No Match (< 40%)
+ * Research benchmark for 128D FaceNet embeddings:
+ * - Distance < 0.25: Extremely high confidence match (95% - 100%)
+ * - Distance 0.25 - 0.45: Solid match (80% - 94%)
+ * - Distance 0.45 - 0.55: Moderate match (65% - 79%)
+ * - Distance 0.55 - 0.60: Match threshold boundary (58% - 64%)
+ * - Distance > 0.60: Different individuals (< 50%)
  */
 export function calculateMatchConfidence(distance: number): number {
   if (distance < 0.0) return 100;
-  if (distance < 0.50) {
-    // 0.0 to 0.50 -> 100% down to 90%
-    const t = distance / 0.50;
-    return Math.round(100 - t * 10);
+  if (distance <= 0.20) {
+    return Math.round(98 + (0.20 - distance) * 10);
   }
-  if (distance <= 0.62) {
-    // 0.50 to 0.62 -> 89% down to 68%
-    const t = (distance - 0.50) / (0.62 - 0.50);
-    return Math.round(89 - t * 21);
+  if (distance <= 0.55) {
+    // Linear scale from 0.20 (98%) down to 0.55 (68%)
+    const t = (distance - 0.20) / (0.55 - 0.20);
+    return Math.round(98 - t * 30);
   }
-  if (distance <= 0.72) {
-    // 0.62 to 0.72 -> 67% down to 40%
-    const t = (distance - 0.62) / (0.72 - 0.62);
-    return Math.round(67 - t * 27);
+  if (distance <= 0.75) {
+    // Linear scale from 0.55 (68%) down to 0.75 (35%)
+    const t = (distance - 0.55) / (0.75 - 0.55);
+    return Math.round(68 - t * 33);
   }
-  // Distance > 0.72: No match down to 0%
-  const t = Math.min(1, (distance - 0.72) / 0.28);
-  return Math.max(0, Math.round(39 - t * 39));
+  // Above 0.75: Very low similarity down to 0%
+  const t = Math.min(1, (distance - 0.75) / 0.45);
+  return Math.max(0, Math.round(35 - t * 35));
 }
 
 /**
  * Compare two 128D descriptors and return verified biometric match result
- * - Distance < 0.50: Confirmed Match (High Confidence)
- * - Distance 0.50 - 0.62: Verified Match (Field standard)
- * - Distance > 0.62: No Match / Not Verified (অপরিচিত মুখ)
  */
 export function compareBiometricVectors(
   liveDesc: Float32Array,
-  targetDesc: Float32Array
+  targetDesc: Float32Array,
+  thresholdDistance: number = 0.56
 ): MatchResult {
   const distance = faceapi.euclideanDistance(liveDesc, targetDesc);
   const confidence = calculateMatchConfidence(distance);
+  const isMatch = distance <= thresholdDistance && confidence >= 60;
 
   let explanation = '';
   let status: MatchResult['status'] = 'no_match';
-  let isMatch = false;
 
-  if (distance < 0.50) {
-    isMatch = true;
+  if (isMatch) {
     status = 'matched';
-    explanation = `Confirmed Match (High Confidence: ${confidence}%, Distance: ${distance.toFixed(3)} < 0.50). Facial vectors align with high precision.`;
-  } else if (distance <= 0.62) {
-    isMatch = true;
-    status = 'matched';
-    explanation = `Verified Biometric Likeness (${confidence}%, Distance: ${distance.toFixed(3)} <= 0.62). Biometric signature verified within acceptable threshold.`;
+    if (confidence >= 88) {
+      explanation = `High-confidence biometric match (${confidence}%). Facial landmark geometries & 128D embeddings align precisely.`;
+    } else {
+      explanation = `Biometric match confirmed (${confidence}% likeness, distance: ${distance.toFixed(3)}).`;
+    }
+  } else if (confidence >= 50) {
+    status = 'low_confidence';
+    explanation = `Similarity is ${confidence}%, which is below the 60% verification threshold (Distance: ${distance.toFixed(3)}). Please adjust lighting and face the camera directly.`;
   } else {
-    isMatch = false;
     status = 'no_match';
-    explanation = `Not Verified (${confidence}% similarity, Distance: ${distance.toFixed(3)} > 0.62). Face does not match registered profile.`;
+    explanation = `Facial mismatch (${confidence}% similarity, distance: ${distance.toFixed(3)}). The scanned face does not match the registered profile.`;
   }
 
   return {
@@ -297,27 +252,14 @@ export function compareBiometricVectors(
 
 /**
  * Cache and precompute biometric profiles for a list of registered beneficiaries
- * Prioritizes stored 128D faceDescriptor from database for instant zero-latency loading.
  */
 export async function precomputeBiometricProfiles(
-  beneficiaries: Array<{ id: string; name: string; photo?: string; faceDescriptor?: number[] }>,
+  beneficiaries: Array<{ id: string; name: string; photo?: string }>,
   onUpdate?: (profiles: BiometricProfile[]) => void
 ): Promise<BiometricProfile[]> {
   const profiles: BiometricProfile[] = [];
 
   for (const b of beneficiaries) {
-    // 1. Ultra-fast path: Use pre-stored 128D vector from database
-    if (b.faceDescriptor && Array.isArray(b.faceDescriptor) && b.faceDescriptor.length === 128) {
-      profiles.push({
-        id: b.id,
-        name: b.name,
-        photoUrl: b.photo || '',
-        descriptor: new Float32Array(b.faceDescriptor),
-      });
-      continue;
-    }
-
-    // 2. Fallback path for legacy records without saved descriptor
     if (!b.photo || b.photo.trim().length === 0 || b.photo === 'MOCK_SELFIE_PIC') {
       continue;
     }

@@ -38,48 +38,31 @@ export default function BeneficiaryRegister({
   const [formError, setFormError] = useState<string | null>(null);
   const [biometricValidating, setBiometricValidating] = useState(false);
   const [biometricValid, setBiometricValid] = useState<boolean | null>(null);
-  const [faceDescriptor, setFaceDescriptor] = useState<number[] | undefined>(editingBeneficiary?.faceDescriptor);
 
-  // Validate face in photo and compute 128-dimensional biometric descriptor
+  // Validate face in photo whenever photo is updated
   useEffect(() => {
     let active = true;
     if (photo && photo.startsWith('data:image')) {
-      // If editing and photo didn't change, we might already have the descriptor
-      if (editingBeneficiary && editingBeneficiary.photo === photo && editingBeneficiary.faceDescriptor) {
-        setBiometricValid(true);
-        setFaceDescriptor(editingBeneficiary.faceDescriptor);
-        setBiometricValidating(false);
-        return;
-      }
-
       setBiometricValidating(true);
       extractFaceDescriptor(photo).then((extracted) => {
         if (active) {
-          if (extracted && extracted.descriptor) {
-            setBiometricValid(true);
-            setFaceDescriptor(Array.from(extracted.descriptor));
-          } else {
-            setBiometricValid(false);
-            setFaceDescriptor(undefined);
-          }
+          setBiometricValid(!!extracted);
           setBiometricValidating(false);
         }
       }).catch(() => {
         if (active) {
           setBiometricValid(false);
-          setFaceDescriptor(undefined);
           setBiometricValidating(false);
         }
       });
     } else {
       setBiometricValid(null);
-      setFaceDescriptor(undefined);
       setBiometricValidating(false);
     }
     return () => {
       active = false;
     };
-  }, [photo, editingBeneficiary]);
+  }, [photo]);
 
   // Camera capture states
   const [cameraActive, setCameraActive] = useState(false);
@@ -101,7 +84,6 @@ export default function BeneficiaryRegister({
       setGender(editingBeneficiary.gender);
       setAddress(editingBeneficiary.address);
       setPhoto(editingBeneficiary.photo);
-      setFaceDescriptor(editingBeneficiary.faceDescriptor);
       setSignature(editingBeneficiary.signature);
       setCreatorAdmin(editingBeneficiary.createdAdmin);
     } else {
@@ -115,7 +97,6 @@ export default function BeneficiaryRegister({
       setGender('Male');
       setAddress('');
       setPhoto('');
-      setFaceDescriptor(undefined);
       setSignature('');
       setCreatorAdmin(currentUser.name || currentUser.id);
     }
@@ -131,6 +112,12 @@ export default function BeneficiaryRegister({
       streamRef.current = null;
     }
 
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setCameraError('Camera API is not supported or accessible in this environment. Please upload a photo instead.');
+      setCameraActive(false);
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 320, height: 240, facingMode: mode }
@@ -139,9 +126,19 @@ export default function BeneficiaryRegister({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
-      console.error('Error starting registration camera', err);
-      setCameraError(`Webcam failed to start in '${mode}' mode. Please verify camera clearances or fallback to local photo upload.`);
+    } catch (err: any) {
+      console.warn('Beneficiary registration camera could not be accessed:', err?.message || err);
+      const isDenied = 
+        err?.name === 'NotAllowedError' || 
+        err?.name === 'PermissionDeniedError' || 
+        err?.message?.toLowerCase().includes('permission') ||
+        err?.message?.toLowerCase().includes('denied');
+
+      setCameraError(
+        isDenied
+          ? 'Camera permission was denied. Please allow camera permissions in your browser or upload a photo using the file button below.'
+          : `Webcam failed to start in '${mode}' mode. Please verify camera hardware or upload a photo below.`
+      );
       setCameraActive(false);
     }
   };
@@ -209,24 +206,12 @@ export default function BeneficiaryRegister({
     }
   };
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
     if (!name.trim()) { setFormError('Beneficiary full name is required.'); return; }
     if (!nid.trim()) { setFormError('National ID / Birth Certificate number is required.'); return; }
     if (!signature) { setFormError('Beneficiary digital signature is required. Please sign in the pad area.'); return; }
-
-    let descriptorToSave = faceDescriptor;
-    if (!descriptorToSave && photo && photo.startsWith('data:image')) {
-      try {
-        const ext = await extractFaceDescriptor(photo);
-        if (ext && ext.descriptor) {
-          descriptorToSave = Array.from(ext.descriptor);
-        }
-      } catch (err) {
-        console.warn('Could not extract face descriptor during submission:', err);
-      }
-    }
 
     const beneficiaryData: Beneficiary = {
       id: id.trim(),
@@ -239,7 +224,6 @@ export default function BeneficiaryRegister({
       gender,
       address: address.trim(),
       photo,
-      faceDescriptor: descriptorToSave,
       signature,
       createdAdmin: creatorAdmin || (currentUser.name || currentUser.id)
     };
@@ -473,7 +457,7 @@ export default function BeneficiaryRegister({
                   ) : biometricValid === true ? (
                     <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg text-xs font-semibold">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Biometric Face Verified (128D Vector Computed &amp; Ready to Save)
+                      Biometric Face Verified &amp; Ready for Real-Time Matching
                     </div>
                   ) : biometricValid === false ? (
                     <div className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-lg text-xs">
