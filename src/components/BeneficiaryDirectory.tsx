@@ -428,76 +428,82 @@ export default function BeneficiaryDirectory({
       )}
 
       {/* 4. Deep Face Biometrics scanning modal */}
-      {(faceScanOpen || targetVerificationBeneficiary) && (
+      {(faceScanOpen || targetVerificationBeneficiary) && !verificationResult && (
+        <FaceScanner
+          beneficiaries={beneficiaries}
+          targetBeneficiary={targetVerificationBeneficiary || undefined}
+          onClose={() => {
+            setFaceScanOpen(false);
+            setTargetVerificationBeneficiary(null);
+            setVerificationResult(null);
+          }}
+          onMatchFound={(b, similarity) => {
+            if (targetVerificationBeneficiary) {
+              setVerificationResult({ success: true, score: similarity });
+            } else {
+              setFaceScanOpen(false);
+              handleFaceScannerMatch(b);
+            }
+          }}
+          onNoMatchFound={(frame) => {
+            if (targetVerificationBeneficiary) {
+              setVerificationResult({ success: false, score: 0 });
+            } else {
+              setFaceScanOpen(false);
+              if (confirm("Biometrics mismatch: This face is not registered in the database. Would you like to create their beneficiary profile now?")) {
+                onShowRegisterForm();
+              }
+            }
+          }}
+        />
+      )}
+
+      {verificationResult && (
         <div className="bg-slate-900/60 backdrop-blur-sm fixed inset-0 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-4 max-w-sm w-full relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full relative shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             <button
               onClick={() => {
                 setFaceScanOpen(false);
                 setTargetVerificationBeneficiary(null);
                 setVerificationResult(null);
               }}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 border rounded-full w-6 h-6 flex items-center justify-center font-bold shadow-sm z-50 bg-white"
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 border rounded-full w-6 h-6 flex items-center justify-center font-bold shadow-sm bg-slate-50 cursor-pointer"
             >
               &times;
             </button>
-            <FaceScanner
-              beneficiaries={beneficiaries}
-              targetBeneficiary={targetVerificationBeneficiary || undefined}
-              onMatchFound={(b, similarity) => {
-                if (targetVerificationBeneficiary) {
-                  setVerificationResult({ success: true, score: similarity });
-                } else {
-                  handleFaceScannerMatch(b);
-                }
-              }}
-              onNoMatchFound={(frame) => {
-                if (targetVerificationBeneficiary) {
-                  setVerificationResult({ success: false, score: 0 });
-                } else {
+            <div className="p-1 text-center">
+              {verificationResult.success ? (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl">
+                  <p className="text-sm font-bold flex items-center justify-center gap-1.5">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600" /> 
+                    Biometric Match Verified!
+                  </p>
+                  <p className="text-xs mt-2 text-slate-700 leading-relaxed">
+                    Confirmed identity alignment with <strong>{targetVerificationBeneficiary?.name}</strong> at <strong className="text-emerald-700">{verificationResult.score.toFixed(1)}% likeness</strong>.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl">
+                  <p className="text-sm font-bold flex items-center justify-center gap-1.5">
+                    <UserX className="w-5 h-5 text-rose-600" /> 
+                    Verification Rejected
+                  </p>
+                  <p className="text-xs mt-2 text-slate-700 leading-relaxed">
+                    Facial feature structures do not conform with stored biometric coordinates.
+                  </p>
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  setTargetVerificationBeneficiary(null);
+                  setVerificationResult(null);
                   setFaceScanOpen(false);
-                  if (confirm("Biometrics mismatch: This face is not registered in the database. Would you like to create their beneficiary profile now?")) {
-                    onShowRegisterForm();
-                  }
-                }
-              }}
-            />
-
-            {verificationResult && (
-              <div className="mt-4 p-3.5 rounded-xl border text-center animate-in fade-in duration-300">
-                {verificationResult.success ? (
-                  <div className="bg-emerald-50 border-emerald-200 text-emerald-800 p-2 rounded-lg">
-                    <p className="text-xs font-bold flex items-center justify-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> 
-                      Biometric Match Verified!
-                    </p>
-                    <p className="text-[10px] mt-1 text-slate-600">
-                      Confirmed identity alignment with <strong>{targetVerificationBeneficiary?.name}</strong> at <strong>{verificationResult.score.toFixed(1)}% likeness</strong>.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="bg-rose-50 border-rose-200 text-rose-800 p-2 rounded-lg">
-                    <p className="text-xs font-bold flex items-center justify-center gap-1.5">
-                      <UserX className="w-4 h-4 text-rose-600" /> 
-                      Verification Rejected
-                    </p>
-                    <p className="text-[10px] mt-1 text-slate-600">
-                      Facial feature structures do not conform with stored biometric coordinates.
-                    </p>
-                  </div>
-                )}
-                <button
-                  onClick={() => {
-                    setTargetVerificationBeneficiary(null);
-                    setVerificationResult(null);
-                    setFaceScanOpen(false);
-                  }}
-                  className="mt-3 w-full bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer"
-                >
-                  Close Biometric Session
-                </button>
-              </div>
-            )}
+                }}
+                className="mt-4 w-full bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs py-2.5 rounded-xl transition cursor-pointer"
+              >
+                Close Biometric Session
+              </button>
+            </div>
           </div>
         </div>
       )}

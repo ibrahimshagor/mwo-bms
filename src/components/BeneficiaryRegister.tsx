@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, ChangeEvent, FormEvent } from 'react';
 import { User, Beneficiary, BeneficiaryType, NationalityType, GenderType } from '../types';
 import SignaturePad from './SignaturePad';
-import { Camera, Image as ImageIcon, Save, UserPlus, FileWarning, Trash2, RefreshCw } from 'lucide-react';
+import { Camera, Image as ImageIcon, Save, UserPlus, FileWarning, Trash2, RefreshCw, CheckCircle2, Scan } from 'lucide-react';
+import { extractFaceDescriptor } from '../utils/faceBiometrics';
 
 interface BeneficiaryRegisterProps {
   currentUser: User;
@@ -35,6 +36,50 @@ export default function BeneficiaryRegister({
   const [signature, setSignature] = useState('');
   const [creatorAdmin, setCreatorAdmin] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [biometricValidating, setBiometricValidating] = useState(false);
+  const [biometricValid, setBiometricValid] = useState<boolean | null>(null);
+  const [faceDescriptor, setFaceDescriptor] = useState<number[] | undefined>(editingBeneficiary?.faceDescriptor);
+
+  // Validate face in photo and compute 128-dimensional biometric descriptor
+  useEffect(() => {
+    let active = true;
+    if (photo && photo.startsWith('data:image')) {
+      // If editing and photo didn't change, we might already have the descriptor
+      if (editingBeneficiary && editingBeneficiary.photo === photo && editingBeneficiary.faceDescriptor) {
+        setBiometricValid(true);
+        setFaceDescriptor(editingBeneficiary.faceDescriptor);
+        setBiometricValidating(false);
+        return;
+      }
+
+      setBiometricValidating(true);
+      extractFaceDescriptor(photo).then((extracted) => {
+        if (active) {
+          if (extracted && extracted.descriptor) {
+            setBiometricValid(true);
+            setFaceDescriptor(Array.from(extracted.descriptor));
+          } else {
+            setBiometricValid(false);
+            setFaceDescriptor(undefined);
+          }
+          setBiometricValidating(false);
+        }
+      }).catch(() => {
+        if (active) {
+          setBiometricValid(false);
+          setFaceDescriptor(undefined);
+          setBiometricValidating(false);
+        }
+      });
+    } else {
+      setBiometricValid(null);
+      setFaceDescriptor(undefined);
+      setBiometricValidating(false);
+    }
+    return () => {
+      active = false;
+    };
+  }, [photo, editingBeneficiary]);
 
   // Camera capture states
   const [cameraActive, setCameraActive] = useState(false);
@@ -56,6 +101,7 @@ export default function BeneficiaryRegister({
       setGender(editingBeneficiary.gender);
       setAddress(editingBeneficiary.address);
       setPhoto(editingBeneficiary.photo);
+      setFaceDescriptor(editingBeneficiary.faceDescriptor);
       setSignature(editingBeneficiary.signature);
       setCreatorAdmin(editingBeneficiary.createdAdmin);
     } else {
@@ -69,6 +115,7 @@ export default function BeneficiaryRegister({
       setGender('Male');
       setAddress('');
       setPhoto('');
+      setFaceDescriptor(undefined);
       setSignature('');
       setCreatorAdmin(currentUser.name || currentUser.id);
     }
@@ -162,12 +209,24 @@ export default function BeneficiaryRegister({
     }
   };
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setFormError(null);
     if (!name.trim()) { setFormError('Beneficiary full name is required.'); return; }
     if (!nid.trim()) { setFormError('National ID / Birth Certificate number is required.'); return; }
     if (!signature) { setFormError('Beneficiary digital signature is required. Please sign in the pad area.'); return; }
+
+    let descriptorToSave = faceDescriptor;
+    if (!descriptorToSave && photo && photo.startsWith('data:image')) {
+      try {
+        const ext = await extractFaceDescriptor(photo);
+        if (ext && ext.descriptor) {
+          descriptorToSave = Array.from(ext.descriptor);
+        }
+      } catch (err) {
+        console.warn('Could not extract face descriptor during submission:', err);
+      }
+    }
 
     const beneficiaryData: Beneficiary = {
       id: id.trim(),
@@ -180,6 +239,7 @@ export default function BeneficiaryRegister({
       gender,
       address: address.trim(),
       photo,
+      faceDescriptor: descriptorToSave,
       signature,
       createdAdmin: creatorAdmin || (currentUser.name || currentUser.id)
     };
@@ -402,6 +462,27 @@ export default function BeneficiaryRegister({
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 Provide a clean, well-lit snapshot. This profile biometric asset is mapped in our system cache for high-speed facial matching during camp distribution desks.
               </p>
+
+              {photo && !cameraActive && (
+                <div>
+                  {biometricValidating ? (
+                    <div className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-1 rounded-lg text-xs font-mono">
+                      <RefreshCw className="w-3 h-3 text-slate-500 animate-spin" />
+                      Analyzing Facial Biometrics...
+                    </div>
+                  ) : biometricValid === true ? (
+                    <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-lg text-xs font-semibold">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      Biometric Face Verified (128D Vector Computed &amp; Ready to Save)
+                    </div>
+                  ) : biometricValid === false ? (
+                    <div className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-lg text-xs">
+                      <Scan className="w-3.5 h-3.5 text-amber-600" />
+                      No distinct face detected in photo. Please ensure face is well-lit and facing forward.
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
               {cameraError && (
                 <div className="bg-red-50 border border-red-200 rounded p-2 flex items-center gap-1.5 text-red-800 text-[10px]">

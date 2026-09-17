@@ -1,8 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
-import { Camera, RefreshCw, CheckCircle, AlertTriangle, ShieldCheck, UserPlus, StopCircle } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { 
+  Camera, RefreshCw, CheckCircle, AlertTriangle, ShieldCheck, UserPlus, 
+  X, Sparkles, UserCheck, ShieldAlert, Scan, ArrowRight, ArrowLeft, Eye, VideoOff,
+  SlidersHorizontal, Check, Search, XCircle
+} from 'lucide-react';
 import { Beneficiary } from '../types';
 import * as faceapi from '@vladmandic/face-api';
-import { getBasePath } from '../App';
+import { 
+  loadFaceApiModels, 
+  areModelsLoaded, 
+  extractFaceDescriptor, 
+  compareBiometricVectors,
+  calculateMatchConfidence,
+  calculateEyeAspectRatio,
+  BiometricProfile,
+  MatchResult 
+} from '../utils/faceBiometrics';
 
 interface FaceScannerProps {
   beneficiaries: Beneficiary[];
@@ -12,1318 +25,1302 @@ interface FaceScannerProps {
   targetBeneficiary?: Beneficiary;
 }
 
-interface CandidateDescriptor {
-  id: string;
-  name: string;
-  descriptor: Float32Array;
-}
-
-interface CandidateLandmarks {
-  id: string;
-  name: string;
-  landmarks: faceapi.FaceLandmarks68;
-}
-
-// Geometry-invariant 68 facial landmarks alignment & similarity comparison helper
-function alignAndCompareLandmarks(landmarksA: faceapi.FaceLandmarks68, landmarksB: faceapi.FaceLandmarks68): number {
-  const getEyeCenter = (positions: any[], start: number, end: number) => {
-    let x = 0, y = 0;
-    const count = end - start + 1;
-    for (let i = start; i <= end; i++) {
-      x += positions[i].x;
-      y += positions[i].y;
-    }
-    return { x: x / count, y: y / count };
-  };
-
-  const posA = landmarksA.positions;
-  const posB = landmarksB.positions;
-
-  const leA = getEyeCenter(posA, 36, 41);
-  const reA = getEyeCenter(posA, 42, 47);
-  const leB = getEyeCenter(posB, 36, 41);
-  const reB = getEyeCenter(posB, 42, 47);
-
-  const distA = Math.hypot(reA.x - leA.x, reA.y - leA.y);
-  const distB = Math.hypot(reB.x - leB.x, reB.y - leB.y);
-
-  if (distA === 0 || distB === 0) return 0;
-
-  // Midpoint centers
-  const midA = { x: (leA.x + reA.x) / 2, y: (leA.y + reA.y) / 2 };
-  const midB = { x: (leB.x + reB.x) / 2, y: (leB.y + reB.y) / 2 };
-
-  // Angle alignments
-  const angleA = Math.atan2(reA.y - leA.y, reA.x - leA.x);
-  const angleB = Math.atan2(reB.y - leB.y, reB.x - leB.x);
-
-  const normalizePoint = (pt: { x: number, y: number }, mid: { x: number, y: number }, scale: number, angle: number) => {
-    const tx = pt.x - mid.x;
-    const ty = pt.y - mid.y;
-    const rx = tx * Math.cos(-angle) - ty * Math.sin(-angle);
-    const ry = tx * Math.sin(-angle) + ty * Math.cos(-angle);
-    return { x: rx / scale, y: ry / scale };
-  };
-
-  let totalError = 0;
-  let count = 0;
-  // Compare internal landmarks (eyebrows, nose, eyes, lips) for high-fidelity geometric similarity
-  for (let i = 17; i < 68; i++) {
-    const normA = normalizePoint(posA[i], midA, distA, angleA);
-    const normB = normalizePoint(posB[i], midB, distB, angleB);
-    const dist = Math.hypot(normA.x - normB.x, normA.y - normB.y);
-    totalError += dist;
-    count++;
-  }
-
-  const avgError = totalError / count;
-  let sim = 100 - (avgError * 500); // Scale error threshold beautifully
-  if (sim < 0) sim = 0;
-  if (sim > 100) sim = 100;
-  return sim;
-}
-
-// Compute visual pixel-by-pixel similarity using classical computer vision template correlation
-async function compareVisualPixelSimilarity(imgSrcA: string, imgSrcB: string): Promise<number> {
-  if (!imgSrcA || !imgSrcB || imgSrcA === 'MOCK_SELFIE_PIC' || imgSrcB === 'MOCK_SELFIE_PIC') {
-    return 0;
-  }
-
-  const loadImg = (src: string): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      if (!src.startsWith('data:')) {
-        img.crossOrigin = 'anonymous';
-      }
-      img.src = src;
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Image load failed'));
-    });
-  };
-
-  try {
-    const [imgA, imgB] = await Promise.all([loadImg(imgSrcA), loadImg(imgSrcB)]);
-    
-    const size = 64; // downscale to 64x64 to align major structural components and reduce noise
-    const canvasA = document.createElement('canvas');
-    canvasA.width = size;
-    canvasA.height = size;
-    const ctxA = canvasA.getContext('2d');
-
-    const canvasB = document.createElement('canvas');
-    canvasB.width = size;
-    canvasB.height = size;
-    const ctxB = canvasB.getContext('2d');
-
-    if (!ctxA || !ctxB) return 0;
-
-    ctxA.drawImage(imgA, 0, 0, size, size);
-    ctxB.drawImage(imgB, 0, 0, size, size);
-
-    const dataA = ctxA.getImageData(0, 0, size, size).data;
-    const dataB = ctxB.getImageData(0, 0, size, size).data;
-
-    let sumDiff = 0;
-    let sumSqrDiff = 0;
-    const pixelCount = size * size;
-
-    for (let i = 0; i < dataA.length; i += 4) {
-      // Grayscale conversion
-      const grayA = 0.299 * dataA[i] + 0.587 * dataA[i+1] + 0.114 * dataA[i+2];
-      const grayB = 0.299 * dataB[i] + 0.587 * dataB[i+1] + 0.114 * dataB[i+2];
-
-      const diff = Math.abs(grayA - grayB);
-      sumDiff += diff;
-      sumSqrDiff += diff * diff;
-    }
-
-    const meanAbsoluteDiff = sumDiff / pixelCount; // 0 to 255
-    const rmse = Math.sqrt(sumSqrDiff / pixelCount); // 0 to 255
-
-    // Normalize to percentage
-    // Under identical lighting, perfect match = 100%. Under normal variation, same face averages 70%-90%. Different face is <60%.
-    let similarity = 100 - (meanAbsoluteDiff * 0.45 + rmse * 0.2);
-    if (similarity < 0) similarity = 0;
-    if (similarity > 100) similarity = 100;
-
-    return similarity;
-  } catch (err) {
-    console.error('Visual similarity comparison failed:', err);
-    return 0;
-  }
-}
-
-export default function FaceScanner({ beneficiaries, onMatchFound, onNoMatchFound, onClose, targetBeneficiary }: FaceScannerProps) {
+export default function FaceScanner({
+  beneficiaries,
+  onMatchFound,
+  onNoMatchFound,
+  onClose,
+  targetBeneficiary
+}: FaceScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const matchingTriggeredRef = useRef<boolean>(false);
-  
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const isRunningRef = useRef<boolean>(true);
+  const lastAnalysisTimeRef = useRef<number>(0);
+
+  // System states
+  const [modelsLoading, setModelsLoading] = useState(!areModelsLoaded());
+  const [modelsProgress, setModelsProgress] = useState(areModelsLoaded() ? 100 : 10);
+  const [modelsStatusText, setModelsStatusText] = useState('Initializing biometric neural networks...');
+  const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [scanState, setScanState] = useState<'idle' | 'initializing' | 'scanning' | 'comparing' | 'success' | 'failure'>('idle');
-  const [simulatedProgress, setSimulatedProgress] = useState(0);
-  const [activeFaceIndex, setActiveFaceIndex] = useState<number>(-1);
-  const [scannedPhoto, setScannedPhoto] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  
-  const [reasoning, setReasoning] = useState<string>('');
-  const [isVerifying, setIsVerifying] = useState(false);
 
-  // Verification Engine state
-  const [verificationEngine, setVerificationEngine] = useState<'local-descriptor' | 'local-geometry' | 'local-visual' | 'cloud-gemini'>('local-descriptor');
+  // Precomputed registry profiles
+  const [registeredProfiles, setRegisteredProfiles] = useState<BiometricProfile[]>([]);
+  const [targetProfile, setTargetProfile] = useState<BiometricProfile | null>(null);
+  const [indexingStatus, setIndexingStatus] = useState<string>('');
 
-  // Neural network models state
-  const [isModelsLoaded, setIsModelsLoaded] = useState(false);
-  const [isFaceApiLoaded, setIsFaceApiLoaded] = useState(false);
-  const [modelsLoadingPercent, setModelsLoadingPercent] = useState(0);
-  const [candidateDescriptors, setCandidateDescriptors] = useState<CandidateDescriptor[]>([]);
-  const [candidateLandmarks, setCandidateLandmarks] = useState<CandidateLandmarks[]>([]);
+  // Live real-time detection state
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [liveMatchResult, setLiveMatchResult] = useState<{
+    beneficiary: Beneficiary | null;
+    confidence: number;
+    distance: number;
+    isMatch: boolean;
+    matchQuality?: 'confirmed' | 'acceptable' | 'none';
+  } | null>(null);
 
-  const MODEL_URL = `${getBasePath()}/models/`;
-
-  // 1. Asynchronously load models on mount
+  // Liveness / Anti-Spoofing toggle (Default OFF per technical requirements)
+  const [enableLiveness, setEnableLiveness] = useState<boolean>(false);
+  const enableLivenessRef = useRef<boolean>(false);
   useEffect(() => {
-    let active = true;
-    const loadNets = async () => {
-      // Define resilient, fast cascading sources
-      const sources = [
-        { name: 'Local cPanel Assets', url: MODEL_URL, timeout: 3500 },
-        { name: 'Cloud JSDelivr CDN', url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/', timeout: 6000 },
-        { name: 'Cloud Unpkg CDN', url: 'https://unpkg.com/@vladmandic/face-api/model/', timeout: 8000 }
-      ];
+    enableLivenessRef.current = enableLiveness;
+  }, [enableLiveness]);
 
-      for (let i = 0; i < sources.length; i++) {
-        if (!active) return;
-        const source = sources[i];
-        console.log(`[FaceScanner] Attempting biometric model load from: ${source.name}...`);
-        
-        if (active) setModelsLoadingPercent(10 + i * 25);
+  const [livenessPassed, setLivenessPassed] = useState<boolean>(false);
+  const livenessPassedRef = useRef<boolean>(false);
+  useEffect(() => {
+    livenessPassedRef.current = livenessPassed;
+  }, [livenessPassed]);
 
-        const sourceTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`${source.name} load timed out`)), source.timeout)
-        );
+  const isEyeClosedRef = useRef<boolean>(false);
+  const blinkCounterRef = useRef<number>(0);
+  const lastFaceSeenRef = useRef<number>(Date.now());
 
-        try {
-          await Promise.race([
-            (async () => {
-              // Load fast face detector for browser canvas looping
-              await faceapi.nets.tinyFaceDetector.loadFromUri(source.url);
-              if (active) setModelsLoadingPercent(25 + i * 25);
-              
-              // Load accurate face detector
-              await faceapi.nets.ssdMobilenetv1.loadFromUri(source.url);
-              if (active) setModelsLoadingPercent(40 + i * 25);
-              
-              // Load facial landmark network
-              await faceapi.nets.faceLandmark68Net.loadFromUri(source.url);
-              if (active) setModelsLoadingPercent(55 + i * 25);
-              
-              // Load feature descriptor network
-              await faceapi.nets.faceRecognitionNet.loadFromUri(source.url);
-              
-              // Try-load optional landMark68TinyNet without failing the overall process
-              try {
-                await faceapi.nets.faceLandmark68TinyNet.loadFromUri(source.url);
-              } catch (err) {
-                console.warn(`Optional tiny landmarks net omitted from ${source.name}`);
-              }
-            })(),
-            sourceTimeout
-          ]);
+  // Loop stability and reference tracking
+  const registeredProfilesRef = useRef<BiometricProfile[]>([]);
+  useEffect(() => { registeredProfilesRef.current = registeredProfiles; }, [registeredProfiles]);
 
-          if (active) {
-            setModelsLoadingPercent(100);
-            setIsFaceApiLoaded(true);
-            setIsModelsLoaded(true);
-            console.log(`Biometric CNN models compiled successfully from ${source.name}.`);
-            return; // Succeeded! Break loop
-          }
-        } catch (err) {
-          console.warn(`Source [${source.name}] loading failed or timed out:`, err);
-        }
+  const targetProfileRef = useRef<BiometricProfile | null>(null);
+  useEffect(() => { targetProfileRef.current = targetProfile; }, [targetProfile]);
+
+  const targetBeneficiaryRef = useRef<Beneficiary | undefined>(targetBeneficiary);
+  useEffect(() => { targetBeneficiaryRef.current = targetBeneficiary; }, [targetBeneficiary]);
+
+  const beneficiariesRef = useRef<Beneficiary[]>(beneficiaries);
+  useEffect(() => { beneficiariesRef.current = beneficiaries; }, [beneficiaries]);
+
+  // Confidence sensitivity threshold (default 60% standard)
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(60);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const confidenceThresholdRef = useRef<number>(confidenceThreshold);
+  useEffect(() => { confidenceThresholdRef.current = confidenceThreshold; }, [confidenceThreshold]);
+
+  const consecutiveMatchesRef = useRef<number>(0);
+  const consecutiveNoFaceFramesRef = useRef<number>(0);
+  const liveMatchResultRef = useRef<any>(null);
+  const isMatchingLockedRef = useRef<boolean>(false);
+
+  // Fallback search state (NID / Mobile / Name)
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Auto-lock counter
+  const [autoLockProgress, setAutoLockProgress] = useState(0);
+  const autoLockTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Snapshot / manual review state
+  const [capturedSnapshot, setCapturedSnapshot] = useState<string | null>(null);
+  const [deepScanResult, setDeepScanResult] = useState<MatchResult | null>(null);
+  const [isDeepScanning, setIsDeepScanning] = useState(false);
+
+  // Filtered beneficiaries for NID/Phone fallback
+  const filteredBeneficiaries = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return beneficiaries.filter((b) => 
+      b.name.toLowerCase().includes(q) ||
+      b.nidOrBirthCert.toLowerCase().includes(q) ||
+      (b.mobile && b.mobile.includes(q)) ||
+      b.id.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [beneficiaries, searchQuery]);
+
+  // 1. Initialize Neural Models
+  useEffect(() => {
+    let mounted = true;
+    isRunningRef.current = true;
+
+    const initModels = async () => {
+      if (areModelsLoaded()) {
+        setModelsLoading(false);
+        setModelsProgress(100);
+        return;
       }
 
-      // If all sources failed
-      if (active) {
-        console.warn('All biometric weight sources exhausted. Bypassing local client-side descriptor extraction.');
-        setIsFaceApiLoaded(false); // Disable client-side descriptor engine, fall back to backend server
-        setIsModelsLoaded(true); // Still show user interface to allow scanning
-        setModelsLoadingPercent(100);
+      setModelsLoading(true);
+      const success = await loadFaceApiModels((percent, text) => {
+        if (mounted) {
+          setModelsProgress(percent);
+          setModelsStatusText(text);
+        }
+      });
+
+      if (mounted) {
+        setModelsLoading(false);
+        if (!success) {
+          setModelsStatusText('Neural engine failed to initialize. Please check network connectivity.');
+        }
       }
     };
 
-    loadNets();
+    initModels();
+
     return () => {
-      active = false;
+      mounted = false;
+      isRunningRef.current = false;
     };
   }, []);
 
-  // 2. Pre-extract descriptors & landmark coordinates for stored candidate database
+  // 2. Precompute 128D Face Descriptors for all registered beneficiaries with photos
   useEffect(() => {
-    if (!isFaceApiLoaded) return;
-
     let active = true;
-    const extractReferenceSignatures = async () => {
-      const extractedDescriptors: CandidateDescriptor[] = [];
-      const extractedLandmarks: CandidateLandmarks[] = [];
+
+    const precompute = async () => {
+      if (modelsLoading) return;
+
+      setIndexingStatus('Compiling biometric indices from beneficiary database...');
+      const profiles: BiometricProfile[] = [];
+
+      // Load target profile directly if it already has faceDescriptor
+      if (targetBeneficiary && targetBeneficiary.faceDescriptor && Array.isArray(targetBeneficiary.faceDescriptor) && targetBeneficiary.faceDescriptor.length === 128) {
+        setTargetProfile({
+          id: targetBeneficiary.id,
+          name: targetBeneficiary.name,
+          photoUrl: targetBeneficiary.photo || '',
+          descriptor: new Float32Array(targetBeneficiary.faceDescriptor),
+        });
+      }
 
       for (const b of beneficiaries) {
         if (!active) break;
-        if (b.photo && b.photo.trim().length > 0) {
+
+        // Path A: Pre-stored 128D Face Descriptor exists in database (0ms instant indexing!)
+        if (b.faceDescriptor && Array.isArray(b.faceDescriptor) && b.faceDescriptor.length === 128) {
+          const prof: BiometricProfile = {
+            id: b.id,
+            name: b.name,
+            photoUrl: b.photo || '',
+            descriptor: new Float32Array(b.faceDescriptor),
+          };
+          profiles.push(prof);
+          if (targetBeneficiary && targetBeneficiary.id === b.id) {
+            setTargetProfile(prof);
+          }
+          continue;
+        }
+
+        // Path B: Fallback for legacy profiles without saved descriptor
+        if (b.photo && b.photo.trim().length > 0 && b.photo !== 'MOCK_SELFIE_PIC') {
           try {
-            const img = new Image();
-            if (!b.photo.startsWith('data:')) {
-              img.crossOrigin = 'anonymous'; // support cross-origin or local paths securely
-            }
-            img.src = b.photo;
-            await new Promise((resolve) => {
-              img.onload = resolve;
-              img.onerror = resolve; // don't freeze on broken image
-            });
-            await img.decode().catch(() => {});
-
-            // Extract using SSD Mobilenet (Gold Standard for portraits) and fall back to TinyFace
-            let matchResult = null;
-            try {
-              matchResult = await faceapi
-                .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
-                .withFaceLandmarks()
-                .withFaceDescriptor();
-            } catch (err) {
-              matchResult = await faceapi
-                .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.25 }))
-                .withFaceLandmarks()
-                .withFaceDescriptor();
-            }
-
-            if (matchResult) {
-              if (matchResult.descriptor) {
-                extractedDescriptors.push({
-                  id: b.id,
-                  name: b.name,
-                  descriptor: matchResult.descriptor
-                });
+            const extracted = await extractFaceDescriptor(b.photo);
+            if (extracted && active) {
+              const prof: BiometricProfile = {
+                id: b.id,
+                name: b.name,
+                photoUrl: b.photo,
+                descriptor: extracted.descriptor,
+                landmarks: extracted.landmarks,
+              };
+              profiles.push(prof);
+              if (targetBeneficiary && targetBeneficiary.id === b.id) {
+                setTargetProfile(prof);
               }
-              if (matchResult.landmarks) {
-                extractedLandmarks.push({
-                  id: b.id,
-                  name: b.name,
-                  landmarks: matchResult.landmarks
-                });
-              }
-              console.log(`Precompiled real biometric parameters for ${b.name} successfully.`);
             }
           } catch (err) {
-            console.error(`Signature compilation failed for ${b.name}:`, err);
+            console.warn(`[Biometrics] Signature indexing failed for ${b.name}:`, err);
           }
         }
       }
+
       if (active) {
-        setCandidateDescriptors(extractedDescriptors);
-        setCandidateLandmarks(extractedLandmarks);
+        setRegisteredProfiles(profiles);
+        setIndexingStatus(
+          profiles.length > 0
+            ? `${profiles.length} beneficiary face signatures cached in memory.`
+            : 'No beneficiary portraits found in database yet.'
+        );
       }
     };
 
-    extractReferenceSignatures();
+    precompute();
+
     return () => {
       active = false;
     };
-  }, [isFaceApiLoaded, beneficiaries]);
+  }, [modelsLoading, beneficiaries, targetBeneficiary]);
 
-  // 3. Start standard video feed webcam with resilient parameters and fallback
-  useEffect(() => {
-    let activeStream: MediaStream | null = null;
-    if (isModelsLoaded) {
-      setScanState('initializing');
-      
-      const tryUserMedia = async () => {
-        try {
-          // Attempt using standard optional ideal parameters to prevent OverconstrainedError
-          const mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              facingMode: { ideal: facingMode }
-            }
-          });
-          activeStream = mediaStream;
-          setStream(mediaStream);
-          setScanState('scanning');
-        } catch (err) {
-          console.warn('Initial camera bind failed, trying ultimate fallback:', err);
-          try {
-            // Ultimate fallback: open any available camera stream
-            const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-            activeStream = fallbackStream;
-            setStream(fallbackStream);
-            setScanState('scanning');
-          } catch (fallbackErr) {
-            console.error('All camera capture attempts failed:', fallbackErr);
-            setCameraError(
-              `Camera device is requested but was not found or is blocked. Please upload a profile photo manually or retry.`
-            );
-            setScanState('idle');
-          }
+  // 3. Start Webcam MediaStream
+  const startCamera = useCallback(async (mode: 'user' | 'environment') => {
+    setCameraError(null);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: { ideal: mode },
+        },
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+      setCameraActive(true);
+    } catch (err: any) {
+      console.warn('Initial camera constraint failed, attempting generic video fallback:', err);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
         }
-      };
+        setCameraActive(true);
+      } catch (fallbackErr: any) {
+        console.error('Camera access rejected or unavailable:', fallbackErr);
+        setCameraError(
+          'Unable to access camera hardware. Please ensure camera permissions are granted or use the manual verification bypass below.'
+        );
+        setCameraActive(false);
+      }
+    }
+  }, []);
 
-      tryUserMedia();
+  useEffect(() => {
+    if (!modelsLoading) {
+      startCamera(facingMode);
     }
 
     return () => {
-      if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
     };
-  }, [isModelsLoaded, facingMode]);
+  }, [modelsLoading, facingMode, startCamera]);
 
-  // 3.5 Robustly bind the active stream to the video tag to prevent any blank/black frame rendering
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      try {
-        videoRef.current.srcObject = stream;
-      } catch (err) {
-        console.warn('Direct stream assignment failed/unsupported:', err);
-      }
+  // Handle manual or automatic match confirmation
+  const handleConfirmMatch = useCallback((matchedBeneficiary: Beneficiary, confidence: number) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     }
-  }, [stream, scanState]);
+    onMatchFound(matchedBeneficiary, confidence);
+  }, [onMatchFound]);
 
-  // 4. Live canvas prediction overlay loop
+  // 4. Continuous Real-Time Video Face Detection & Live Matching Loop
   useEffect(() => {
-    if (!isFaceApiLoaded || scanState !== 'scanning' || !videoRef.current) return;
-    
-    let active = true;
-    let animFrameId: number;
+    if (!cameraActive || modelsLoading || capturedSnapshot) return;
 
-    const streamLoop = async () => {
-      if (!active) return;
+    let animId: number;
+    isRunningRef.current = true;
+    isMatchingLockedRef.current = false;
+    consecutiveMatchesRef.current = 0;
+    consecutiveNoFaceFramesRef.current = 0;
+
+    const runLiveLoop = async () => {
+      if (!isRunningRef.current || isMatchingLockedRef.current) return;
+
       const video = videoRef.current;
       const canvas = canvasRef.current;
 
       if (video && video.readyState === 4 && canvas) {
+        const now = performance.now();
+        // Deep analysis interval: every 130ms for silky smooth tracking and rapid recognition
+        const shouldRunDescriptor = now - lastAnalysisTimeRef.current > 130;
+
         try {
-          // Detect single face with Tiny detector for continuous 30fps rendering
-          const rawFace = await faceapi
-            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.45 }))
-            .withFaceLandmarks(true);
+          const displayWidth = video.clientWidth || 400;
+          const displayHeight = video.clientHeight || 300;
 
-          if (rawFace && canvas && active) {
-            const displayWidth = video.clientWidth || 320;
-            const displayHeight = video.clientHeight || 320;
+          if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+            canvas.width = displayWidth;
+            canvas.height = displayHeight;
+          }
 
-            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
-              canvas.width = displayWidth;
-              canvas.height = displayHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Resilient face detection using 320 input size and 0.20 score threshold
+            let detection: any = null;
+            try {
+              if (shouldRunDescriptor && faceapi.nets.faceRecognitionNet.isLoaded) {
+                lastAnalysisTimeRef.current = now;
+                detection = await faceapi
+                  .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 }))
+                  .withFaceLandmarks(false)
+                  .withFaceDescriptor();
+              } else {
+                detection = await faceapi
+                  .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 }))
+                  .withFaceLandmarks(false);
+              }
+            } catch (err) {
+              detection = null;
             }
 
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (detection) {
+              setFaceDetected(true);
+              lastFaceSeenRef.current = now;
+              consecutiveNoFaceFramesRef.current = 0;
 
-              // Scale landmarks and bounding box
-              const boxDetails = faceapi.resizeResults(rawFace, { width: displayWidth, height: displayHeight });
+              // Check liveness / blink if landmarks present
+              if (detection.landmarks) {
+                try {
+                  const leftEye = detection.landmarks.getLeftEye();
+                  const rightEye = detection.landmarks.getRightEye();
+                  const leftEar = calculateEyeAspectRatio(leftEye);
+                  const rightEar = calculateEyeAspectRatio(rightEye);
+                  const ear = (leftEar + rightEar) / 2;
 
-              // Draw biometric HUD box
-              const { x, y, width, height } = boxDetails.detection.box;
-              ctx.strokeStyle = '#10B981'; // Emerald 500
-              ctx.lineWidth = 2.5;
+                  if (ear < 0.22) {
+                    isEyeClosedRef.current = true;
+                  } else if (ear > 0.25 && isEyeClosedRef.current) {
+                    isEyeClosedRef.current = false;
+                    blinkCounterRef.current += 1;
+                    setLivenessPassed(true);
+                  }
+                } catch (e) {}
+              }
+
+              const resized = faceapi.resizeResults(detection, { width: displayWidth, height: displayHeight });
+              const { x, y, width, height } = resized.detection.box;
+
+              // Compare descriptor if extracted in this frame
+              if (detection.descriptor) {
+                const liveDescriptor: Float32Array = detection.descriptor;
+                const activeTarget = targetBeneficiaryRef.current;
+                const activeTargetProfile = targetProfileRef.current;
+                const activeProfiles = registeredProfilesRef.current;
+                const activeBeneficiaries = beneficiariesRef.current;
+
+                if (activeTarget && activeTargetProfile) {
+                  // Specific target verification mode
+                  const dist = faceapi.euclideanDistance(liveDescriptor, activeTargetProfile.descriptor);
+                  const conf = calculateMatchConfidence(dist);
+                  const isMatch = dist <= 0.62;
+                  const matchQuality = dist < 0.50 ? 'confirmed' : isMatch ? 'acceptable' : 'none';
+
+                  const result = {
+                    beneficiary: isMatch ? activeTarget : null,
+                    confidence: conf,
+                    distance: dist,
+                    isMatch,
+                    matchQuality,
+                  };
+                  liveMatchResultRef.current = result;
+                  setLiveMatchResult(result);
+                } else if (activeProfiles.length > 0) {
+                  // General registry matching mode
+                  let bestProf: BiometricProfile | null = null;
+                  let minDistance = Infinity;
+
+                  for (const prof of activeProfiles) {
+                    const dist = faceapi.euclideanDistance(liveDescriptor, prof.descriptor);
+                    if (dist < minDistance) {
+                      minDistance = dist;
+                      bestProf = prof;
+                    }
+                  }
+
+                  const conf = calculateMatchConfidence(minDistance);
+                  const isMatch = minDistance <= 0.62 && bestProf !== null;
+                  const matchQuality = minDistance < 0.50 ? 'confirmed' : isMatch ? 'acceptable' : 'none';
+                  const matchBeneficiary = isMatch && bestProf ? activeBeneficiaries.find((b) => b.id === bestProf!.id) || null : null;
+
+                  const result = {
+                    beneficiary: matchBeneficiary,
+                    confidence: conf,
+                    distance: minDistance,
+                    isMatch,
+                    matchQuality,
+                  };
+                  liveMatchResultRef.current = result;
+                  setLiveMatchResult(result);
+                } else {
+                  // No registered profiles exist in the system yet
+                  const result = {
+                    beneficiary: null,
+                    confidence: 0,
+                    distance: 1.0,
+                    isMatch: false,
+                    matchQuality: 'none' as const,
+                  };
+                  liveMatchResultRef.current = result;
+                  setLiveMatchResult(result);
+                }
+              }
+
+              // Auto-lock accumulation based on verified continuous match
+              const currentMatch = liveMatchResultRef.current;
+              const livenessOk = !enableLivenessRef.current || livenessPassedRef.current;
+
+              if (currentMatch?.isMatch && currentMatch.beneficiary && livenessOk) {
+                consecutiveMatchesRef.current += 1;
+                const progress = Math.min(100, consecutiveMatchesRef.current * 34); // ~3 frames to lock (~350ms)
+                setAutoLockProgress(progress);
+
+                if (progress >= 100 && !isMatchingLockedRef.current) {
+                  isMatchingLockedRef.current = true;
+                  handleConfirmMatch(currentMatch.beneficiary, currentMatch.confidence);
+                  return;
+                }
+              } else {
+                consecutiveMatchesRef.current = 0;
+                setAutoLockProgress(0);
+              }
+
+              // Determine HUD Styling:
+              // Verified Match -> Emerald Green (#10B981)
+              // Not Verified (Mismatch/Unregistered) -> Vibrant Red/Rose (#EF4444)
+              // Evaluating / Initial -> Amber (#F59E0B)
+              const isMatch = currentMatch?.isMatch;
+              const isEvaluated = currentMatch && currentMatch.distance !== undefined;
+              const boxColor = isMatch
+                ? '#10B981'
+                : isEvaluated
+                ? '#EF4444'
+                : '#F59E0B';
+
+              // Draw bounding corner brackets
+              ctx.strokeStyle = boxColor;
+              ctx.lineWidth = 3.5;
+              const cornerLength = Math.min(26, width * 0.22);
+
+              // Top-left
+              ctx.beginPath();
+              ctx.moveTo(x, y + cornerLength);
+              ctx.lineTo(x, y);
+              ctx.lineTo(x + cornerLength, y);
+              ctx.stroke();
+
+              // Top-right
+              ctx.beginPath();
+              ctx.moveTo(x + width - cornerLength, y);
+              ctx.lineTo(x + width, y);
+              ctx.lineTo(x + width, y + cornerLength);
+              ctx.stroke();
+
+              // Bottom-left
+              ctx.beginPath();
+              ctx.moveTo(x, y + height - cornerLength);
+              ctx.lineTo(x, y + height);
+              ctx.lineTo(x + cornerLength, y + height);
+              ctx.stroke();
+
+              // Bottom-right
+              ctx.beginPath();
+              ctx.moveTo(x + width - cornerLength, y + height);
+              ctx.lineTo(x + width, y + height);
+              ctx.lineTo(x + width, y + height - cornerLength);
+              ctx.stroke();
+
+              // Inner guide border
+              ctx.strokeStyle = `${boxColor}44`;
+              ctx.lineWidth = 1;
               ctx.strokeRect(x, y, width, height);
 
-              // Draw neon locking brackets
-              ctx.fillStyle = '#10B981';
-              ctx.font = 'bold 9px monospace';
-              ctx.fillText(`BIOMETRIC ENGAGED ~ LOCK: ${(boxDetails.detection.score * 100).toFixed(0)}%`, x + 4, y - 8);
+              // Draw landmarks
+              if (resized.landmarks) {
+                ctx.fillStyle = boxColor;
+                resized.landmarks.positions.forEach((pt: any) => {
+                  ctx.beginPath();
+                  ctx.arc(pt.x, pt.y, 1.4, 0, 2 * Math.PI);
+                  ctx.fill();
+                });
+              }
 
-              // Draw key landmark points (eye sockets, cheek lines)
-              const dots = boxDetails.landmarks.positions;
-              ctx.fillStyle = '#34D399';
-              dots.forEach((dot) => {
-                ctx.beginPath();
-                ctx.arc(dot.x, dot.y, 1.2, 0, 2 * Math.PI);
-                ctx.fill();
-              });
-            }
-          } else if (canvas && active) {
-            // Keep canvas empty if no face resides
-            const ctx = canvas.getContext('2d');
-            if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-          }
-        } catch (err) {
-          // Gracefully continue loop
-        }
-      }
+              // HUD Badge Text
+              let badgeText = 'FACIAL GEOMETRY DETECTED';
+              if (isMatch) {
+                badgeText = `✓ VERIFIED: ${currentMatch?.beneficiary?.name?.toUpperCase()} (${currentMatch?.confidence}%)`;
+              } else if (isEvaluated) {
+                badgeText = `⚠ NOT VERIFIED / নো ম্যাচ (তালিকায় নেই)`;
+              } else {
+                badgeText = 'ANALYZING GEOMETRY...';
+              }
 
-      if (active) {
-        animFrameId = requestAnimationFrame(streamLoop);
-      }
-    };
+              ctx.font = 'bold 10px monospace';
+              const textMetrics = ctx.measureText(badgeText);
+              const badgeWidth = textMetrics.width + 16;
+              const badgeHeight = 20;
+              const badgeX = x + Math.max(0, (width - badgeWidth) / 2);
+              const badgeY = Math.max(8, y - badgeHeight - 5);
 
-    streamLoop();
-    return () => {
-      active = false;
-      cancelAnimationFrame(animFrameId);
-    };
-  }, [isModelsLoaded, scanState, stream]);
+              // Badge background
+              ctx.fillStyle = isMatch ? 'rgba(6, 78, 59, 0.92)' : isEvaluated ? 'rgba(127, 29, 29, 0.92)' : 'rgba(15, 23, 42, 0.85)';
+              ctx.beginPath();
+              ctx.roundRect?.(badgeX, badgeY, badgeWidth, badgeHeight, 5) || ctx.rect(badgeX, badgeY, badgeWidth, badgeHeight);
+              ctx.fill();
+              ctx.strokeStyle = boxColor;
+              ctx.lineWidth = 1.2;
+              ctx.stroke();
 
-  // 5. Comparison process holographic cycling simulation
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (scanState === 'comparing') {
-      timer = setInterval(() => {
-        setSimulatedProgress((prev) => {
-          if (prev >= 100) return 100;
-          return prev + 15;
-        });
-
-        if (beneficiaries.length > 0) {
-          setActiveFaceIndex((prev) => (prev + 1) % beneficiaries.length);
-        }
-      }, 100);
-    } else {
-      setSimulatedProgress(0);
-      setActiveFaceIndex(-1);
-    }
-    return () => clearInterval(timer);
-  }, [scanState, beneficiaries]);
-
-  // 6. Final verification execution trigger
-  useEffect(() => {
-    if (scanState === 'comparing' && simulatedProgress >= 100) {
-      if (!matchingTriggeredRef.current) {
-        matchingTriggeredRef.current = true;
-        executeFaceMatching();
-      }
-    }
-  }, [scanState, simulatedProgress]);
-
-  // Reset matching trigger ref when leaving comparing state
-  useEffect(() => {
-    if (scanState !== 'comparing') {
-      matchingTriggeredRef.current = false;
-    }
-  }, [scanState]);
-
-  // Capture frame action handler
-  const captureFrame = () => {
-    if (scanState !== 'scanning') return;
-
-    const video = videoRef.current;
-    const canvas = captureCanvasRef.current;
-    
-    if (canvas && video) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        canvas.width = 400;
-        canvas.height = 300;
-        if (facingMode === 'user') {
-          // Flip image horizontally to reflect natural mirrored view
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-        }
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        
-        const photoData = canvas.toDataURL('image/jpeg');
-        setScannedPhoto(photoData);
-        setScanState('comparing');
-      }
-    } else {
-      // Offline fallback token
-      setScannedPhoto('MOCK_SELFIE_PIC');
-      setScanState('comparing');
-    }
-  };
-
-  // Cross-correlation vector matching logic
-  const executeFaceMatching = async () => {
-    if (beneficiaries.length === 0) {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        setStream(null);
-      }
-      setScanState('failure');
-      setReasoning('The beneficiary registry database is currently empty.');
-      return;
-    }
-
-    // Add a robust, fail-safe backup timer to prevent any infinite loading spinners/hangs
-    let resolvedByMainProcess = false;
-    const failSafeTimer = setTimeout(() => {
-      if (resolvedByMainProcess) return;
-      resolvedByMainProcess = true;
-      console.warn("Biometric matching timed out. Triggering fail-safe rejection.");
-      setIsVerifying(false);
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        setStream(null);
-      }
-      setScanState('failure');
-      setReasoning(targetBeneficiary 
-        ? `Biometric verification timed out. Facial details could not be matched against ${targetBeneficiary.name} securely.`
-        : "Biometric matching timed out. No match found within response threshold."
-      );
-    }, 25000); // 25 seconds timeout for server/client processing
-
-    let liveBiometricDescriptor: Float32Array | null = null;
-    let liveBiometricLandmarks: faceapi.FaceLandmarks68 | null = null;
-
-    // 1. Primary extraction source: Captured stable snapshot image (most reliable for post-click matching)
-    if (isFaceApiLoaded && scannedPhoto && scannedPhoto.startsWith('data:image')) {
-      try {
-        const tempImg = new Image();
-        tempImg.src = scannedPhoto;
-        await new Promise((res) => { tempImg.onload = res; });
-        await tempImg.decode().catch(() => {});
-        
-        let fullDetection = null;
-        try {
-          fullDetection = await faceapi
-            .detectSingleFace(tempImg, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-        } catch (err) {
-          fullDetection = await faceapi
-            .detectSingleFace(tempImg, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.25 }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-        }
-
-        if (fullDetection) {
-          liveBiometricDescriptor = fullDetection.descriptor;
-          liveBiometricLandmarks = fullDetection.landmarks;
-          console.log("Successfully compiled face descriptor & landmarks from captured snapshot.");
-        }
-      } catch (err) {
-        console.warn('Snapshot descriptor extract failed:', err);
-      }
-    }
-
-    // 2. Secondary extraction source: Live video element (if still open/ready)
-    const video = videoRef.current;
-    if ((!liveBiometricDescriptor || !liveBiometricLandmarks) && isFaceApiLoaded && video && video.readyState === 4) {
-      try {
-        const fullDetection = await faceapi
-          .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.25 }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        
-        if (fullDetection) {
-          if (!liveBiometricDescriptor) liveBiometricDescriptor = fullDetection.descriptor;
-          if (!liveBiometricLandmarks) liveBiometricLandmarks = fullDetection.landmarks;
-          console.log("Successfully compiled face descriptor & landmarks from live video.");
-        }
-      } catch (err) {
-        console.warn('WebGL/Canvas live descriptor compilation bypassed:', err);
-      }
-    }
-
-    // Stop webcam stream now that we have done the descriptor extraction attempts
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-
-    // --- ENGINE MODULE A: IN-MEMORY BIOMETRIC VECTOR DISTANCE CORRELATION ---
-    if (verificationEngine === 'local-descriptor') {
-      if (liveBiometricDescriptor && candidateDescriptors.length > 0) {
-        if (targetBeneficiary) {
-          const targetRef = candidateDescriptors.find(ref => ref.id === targetBeneficiary.id);
-          if (targetRef) {
-            const spaceDistance = faceapi.euclideanDistance(liveBiometricDescriptor, targetRef.descriptor);
-            // Scale to intuitive human percentage (0.8 Euclidean distance maps to 60.0% threshold)
-            let simPercentage = 100 - (spaceDistance * 50);
-            if (simPercentage < 0) simPercentage = 0;
-            if (simPercentage > 100) simPercentage = 100;
-
-            if (simPercentage >= 60.0) {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('success');
-              setReasoning(`Client-Side Biometric Lock Confirmed! Found matched 128D identity record specifically for target [${targetBeneficiary.name}] with calculated likeness matrix: ${(simPercentage).toFixed(1)}%.`);
-              onMatchFound(targetBeneficiary, simPercentage);
-              return;
+              // Badge text
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillText(badgeText, badgeX + 8, badgeY + 14);
             } else {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('failure');
-              setReasoning(`Biometric Verification Rejected! Calculated 128D facial similarity with target [${targetBeneficiary.name}] is only ${(simPercentage).toFixed(1)}%, which is below the 60.0% verification threshold.`);
-              return;
-            }
-          }
-        } else {
-          let closestRef: CandidateDescriptor | null = null;
-          let highestSimilarity = 0;
-
-          for (const ref of candidateDescriptors) {
-            const spaceDistance = faceapi.euclideanDistance(liveBiometricDescriptor, ref.descriptor);
-            let simPercentage = 100 - (spaceDistance * 50);
-            if (simPercentage < 0) simPercentage = 0;
-            if (simPercentage > 100) simPercentage = 100;
-
-            if (simPercentage > highestSimilarity) {
-              highestSimilarity = simPercentage;
-              closestRef = ref;
-            }
-          }
-
-          // If confidence index exceeds the safety validation threshold, authorize entry locally
-          if (closestRef && highestSimilarity >= 60.0) {
-            const matchData = beneficiaries.find(b => b.id === closestRef!.id);
-            if (matchData) {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('success');
-              setReasoning(`Client-Side Biometric Lock Confirmed! Found matched identity record: [${closestRef.name}] with calculated likeness matrix: ${(highestSimilarity).toFixed(1)}%.`);
-              onMatchFound(matchData, highestSimilarity);
-              return;
-            }
-          }
-        }
-      }
-
-      // Handle missing inputs for descriptor matching gracefully
-      if (!liveBiometricDescriptor) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("WebGL CNN Extraction Failed: Could not detect any distinctive facial landmarks in the video feed. Please center your face, look straight at the camera, and verify there is sufficient lighting.");
-        return;
-      }
-      if (candidateDescriptors.length === 0) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("Database Precompiles Absent: None of the registered beneficiaries have a photo saved in their profiles yet. Please edit a beneficiary or register a new one to snap a clear camera portrait first!");
-        return;
-      }
-    }
-
-    // --- ENGINE MODULE B: LOCAL GEOMETRIC LANDMARK RATIO CORRELATION ---
-    if (verificationEngine === 'local-geometry') {
-      if (liveBiometricLandmarks && candidateLandmarks.length > 0) {
-        if (targetBeneficiary) {
-          const targetRef = candidateLandmarks.find(ref => ref.id === targetBeneficiary.id);
-          if (targetRef) {
-            const simPercentage = alignAndCompareLandmarks(liveBiometricLandmarks, targetRef.landmarks);
-            if (simPercentage >= 65.0) {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('success');
-              setReasoning(`Client-Side Geometry Lock Confirmed! Aligned landmark proportional ratios verified target [${targetBeneficiary.name}] with calculated likeness matrix: ${(simPercentage).toFixed(1)}%.`);
-              onMatchFound(targetBeneficiary, simPercentage);
-              return;
-            } else {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('failure');
-              setReasoning(`Geometry Verification Rejected! Structural facial proportions differed from [${targetBeneficiary.name}]. Similarity was only ${(simPercentage).toFixed(1)}%, below the 65.0% threshold.`);
-              return;
-            }
-          }
-        } else {
-          let closestRef: CandidateLandmarks | null = null;
-          let highestSimilarity = 0;
-
-          for (const ref of candidateLandmarks) {
-            const simPercentage = alignAndCompareLandmarks(liveBiometricLandmarks, ref.landmarks);
-            if (simPercentage > highestSimilarity) {
-              highestSimilarity = simPercentage;
-              closestRef = ref;
-            }
-          }
-
-          if (closestRef && highestSimilarity >= 65.0) {
-            const matchData = beneficiaries.find(b => b.id === closestRef!.id);
-            if (matchData) {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('success');
-              setReasoning(`Client-Side Geometry Lock Confirmed! Found matched identity record: [${closestRef.name}] with calculated likeness matrix: ${(highestSimilarity).toFixed(1)}%.`);
-              onMatchFound(matchData, highestSimilarity);
-              return;
-            }
-          }
-        }
-      }
-
-      // Handle missing inputs for geometry matching gracefully
-      if (!liveBiometricLandmarks) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("Geometric Landmark Extraction Failed: No face contours could be aligned in the video feed. Ensure your full face is visible without glasses or hats blocking eyebrows/eyes.");
-        return;
-      }
-      if (candidateLandmarks.length === 0) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("Database Landmark Profiles Absent: None of the registered beneficiaries have a photo saved in their profiles yet. Please register or edit a beneficiary and snap a portrait first!");
-        return;
-      }
-    }
-
-    // --- ENGINE MODULE B-2: LOCAL VISUAL PIXEL TEMPLATE CORRELATION ---
-    if (verificationEngine === 'local-visual') {
-      if (scannedPhoto && scannedPhoto.startsWith('data:image')) {
-        if (targetBeneficiary) {
-          if (targetBeneficiary.photo && targetBeneficiary.photo.trim().length > 0) {
-            setIsVerifying(true);
-            const simPercentage = await compareVisualPixelSimilarity(scannedPhoto, targetBeneficiary.photo);
-            setIsVerifying(false);
-            
-            if (simPercentage >= 65.0) {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('success');
-              setReasoning(`Client-Side Pixel Similarity Confirmed! Micro-structural texture alignment verified target [${targetBeneficiary.name}] with calculated likeness matrix: ${(simPercentage).toFixed(1)}%.`);
-              onMatchFound(targetBeneficiary, simPercentage);
-              return;
-            } else {
-              clearTimeout(failSafeTimer);
-              resolvedByMainProcess = true;
-              setScanState('failure');
-              setReasoning(`Pixel Similarity Rejected! Live face captured photo differs from registered profile of [${targetBeneficiary.name}]. Scaled similarity was only ${(simPercentage).toFixed(1)}%, below the 65.0% threshold.`);
-              return;
-            }
-          }
-        } else {
-          setIsVerifying(true);
-          let closestRef: Beneficiary | null = null;
-          let highestSimilarity = 0;
-
-          for (const b of beneficiaries) {
-            if (b.photo && b.photo.trim().length > 0) {
-              const simPercentage = await compareVisualPixelSimilarity(scannedPhoto, b.photo);
-              if (simPercentage > highestSimilarity) {
-                highestSimilarity = simPercentage;
-                closestRef = b;
+              // Grace window: Don't instantly drop face on single missed frame (motion blur)
+              consecutiveNoFaceFramesRef.current += 1;
+              if (now - lastFaceSeenRef.current > 400) {
+                setFaceDetected(false);
+                setLiveMatchResult(null);
+                liveMatchResultRef.current = null;
+                consecutiveMatchesRef.current = 0;
+                setAutoLockProgress(0);
               }
             }
           }
-          setIsVerifying(false);
-
-          if (closestRef && highestSimilarity >= 65.0) {
-            clearTimeout(failSafeTimer);
-            resolvedByMainProcess = true;
-            setScanState('success');
-            setReasoning(`Client-Side Pixel Similarity Confirmed! Matched register index: [${closestRef.name}] with calculated likeness matrix: ${(highestSimilarity).toFixed(1)}%.`);
-            onMatchFound(closestRef, highestSimilarity);
-            return;
-          } else if (closestRef) {
-            clearTimeout(failSafeTimer);
-            resolvedByMainProcess = true;
-            setScanState('failure');
-            setReasoning(`Visual Match Rejected! Weakest correlation with database. Closest match was [${closestRef.name}] with similarity of ${(highestSimilarity).toFixed(1)}%, which is below the 65.0% threshold.`);
-            return;
-          }
+        } catch (loopErr) {
+          // Continue loop
         }
       }
 
-      // Handle missing inputs for visual matching gracefully
-      if (!scannedPhoto) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("Visual Matching Failed: No stable camera snapshot could be captured. Please retry and hold still while clicking.");
-        return;
-      }
-      const hasPhotos = beneficiaries.some(b => b.photo && b.photo.trim().length > 0);
-      if (!hasPhotos) {
-        clearTimeout(failSafeTimer);
-        resolvedByMainProcess = true;
-        setScanState('failure');
-        setReasoning("Database Portrait Profiles Absent: None of the registered beneficiaries have a photo saved in their profiles yet. Please register or edit a beneficiary and snap a portrait first!");
-        return;
-      }
-    }
-
-    // --- ENGINE MODULE C: FULL-STACK CLOUD MULTIMODAL API BACKUP ---
-    const candidatesList = targetBeneficiary
-      ? [{ id: targetBeneficiary.id, name: targetBeneficiary.name, photo: targetBeneficiary.photo }]
-      : beneficiaries.map(b => ({
-          id: b.id,
-          name: b.name,
-          photo: b.photo
-        }));
-
-    const candidatesWithPhotos = candidatesList.filter(c => c.photo && c.photo.trim().length > 0);
-
-    if (candidatesWithPhotos.length === 0) {
-      clearTimeout(failSafeTimer);
-      resolvedByMainProcess = true;
-      setIsVerifying(false);
-      setScanState('failure');
-      setReasoning("No registered beneficiaries have actual camera portraits saved yet (most use default blank silhouettes). Please register a new profile or edit an existing beneficiary to snap/upload an actual photo first.");
-      return;
-    }
-
-    setIsVerifying(true);
-    setReasoning('Evaluating frame matrices on the server-side via Google Gemini models...');
-
-    try {
-      let payloadPhoto = scannedPhoto;
-      if (!payloadPhoto || payloadPhoto === 'MOCK_SELFIE_PIC') {
-        payloadPhoto = candidatesWithPhotos[0].photo; 
-      }
-
-      const response = await fetch(`${getBasePath()}/api/face-match`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          capturedPhoto: payloadPhoto,
-          candidates: candidatesList
-        })
-      });
-
-      if (!response.ok) throw new Error(`HTTP Error Status ${response.status}`);
-
-      const result = await response.json();
-      
-      if (resolvedByMainProcess) return; // fail-safe already resolved
-      clearTimeout(failSafeTimer);
-      resolvedByMainProcess = true;
-      setIsVerifying(false);
-
-      if (result.match && result.matchedId) {
-        const resolved = beneficiaries.find(b => b.id === result.matchedId);
-        if (resolved) {
-          if (targetBeneficiary && resolved.id !== targetBeneficiary.id) {
-            setScanState('failure');
-            setReasoning(`Biometric Verification Rejected! Scanned individual matches ${resolved.name} but does not match expected target (${targetBeneficiary.name}).`);
-          } else {
-            setScanState('success');
-            setReasoning(result.reasoning || `Highly identical biometric match matched with ${result.confidence}% confidence.`);
-            onMatchFound(resolved, result.confidence || 96.5);
-          }
-        } else {
-          setScanState('failure');
-          setReasoning(`Matched credential ID ${result.matchedId} which is missing in current state.`);
-        }
-      } else {
-        setScanState('failure');
-        setReasoning(result.reasoning || 'Biometric analysis verification declined. Match score degraded below 85% safety boundary.');
-      }
-
-    } catch (err: any) {
-      if (resolvedByMainProcess) return;
-      clearTimeout(failSafeTimer);
-      resolvedByMainProcess = true;
-      console.error('All biometric matching channels crashed:', err);
-      setIsVerifying(false);
-      setScanState('failure');
-      
-      const is404 = err.message?.includes('404') || String(err).includes('404');
-      if (is404) {
-        setReasoning(`cPanel Server Offline (404): Since this application is running in a static web hosting environment (cPanel) without the Node.js/Express background server, the server-side multimodal API is offline. Face verification relies entirely on the local in-browser WebGL neural networks. Local matching was performed against all registered profiles, but no profile photo matched the scanned face above the 70.0% confidence threshold. To fix this, edit the beneficiary to upload/snap a high-quality face photo, and verify with a well-lit, centered camera shot!`);
-      } else {
-        setReasoning(`Security verification faulted: ${err.message || 'Verification module offline.'}`);
-      }
-    }
-  };
-
-  const toggleFacingMode = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-    setCameraError(null);
-    setScanState('initializing');
-    setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
-  };
-
-  const startOver = () => {
-    setScannedPhoto(null);
-    setScanState('initializing');
-    setCameraError(null);
-    setReasoning('');
-
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-
-    const retryUserMedia = async () => {
-      try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: { ideal: facingMode }
-          }
-        });
-        setStream(mediaStream);
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-        }
-        setScanState('scanning');
-      } catch (err) {
-        console.warn('startOver initial camera failed, trying fallback:', err);
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          setStream(fallbackStream);
-          if (videoRef.current) {
-            videoRef.current.srcObject = fallbackStream;
-          }
-          setScanState('scanning');
-        } catch (fallbackErr) {
-          console.error('navigator.mediaDevices.getUserMedia startOver final error:', fallbackErr);
-          setCameraError('Camera device not found or blocked: check camera permissions/connection.');
-          setScanState('idle');
-        }
+      if (isRunningRef.current && !isMatchingLockedRef.current) {
+        animId = requestAnimationFrame(runLiveLoop);
       }
     };
-    retryUserMedia();
+
+    animId = requestAnimationFrame(runLiveLoop);
+
+    return () => {
+      isRunningRef.current = false;
+      cancelAnimationFrame(animId);
+    };
+  }, [cameraActive, modelsLoading, capturedSnapshot, handleConfirmMatch]);
+
+  // 6. Capture High-Resolution Snapshot for Deep Analysis
+  const captureSnapshot = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 480;
+    canvas.height = 360;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    if (facingMode === 'user') {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    setCapturedSnapshot(photoDataUrl);
+
+    // Run Deep Biometric Verification on Snapshot
+    setIsDeepScanning(true);
+    try {
+      const extracted = await extractFaceDescriptor(photoDataUrl);
+      if (!extracted) {
+        setDeepScanResult({
+          distance: 1.0,
+          confidence: 0,
+          isMatch: false,
+          status: 'no_face',
+          explanation: 'No clear face detected in the captured snapshot. Please ensure face is centered with good lighting.',
+        });
+        setIsDeepScanning(false);
+        return;
+      }
+
+      if (targetBeneficiary && targetProfile) {
+        const result = compareBiometricVectors(extracted.descriptor, targetProfile.descriptor);
+        setDeepScanResult(result);
+      } else if (registeredProfiles.length > 0) {
+        let bestProfile: BiometricProfile | null = null;
+        let minDistance = Infinity;
+
+        for (const prof of registeredProfiles) {
+          const dist = faceapi.euclideanDistance(extracted.descriptor, prof.descriptor);
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestProfile = prof;
+          }
+        }
+
+        if (bestProfile) {
+          const result = compareBiometricVectors(extracted.descriptor, bestProfile.descriptor);
+          setDeepScanResult(result);
+          if (result.isMatch) {
+            const found = beneficiaries.find((b) => b.id === bestProfile?.id);
+            if (found) {
+              setLiveMatchResult({
+                beneficiary: found,
+                confidence: result.confidence,
+                distance: result.distance,
+                isMatch: true,
+              });
+            }
+          }
+        }
+      } else {
+        setDeepScanResult({
+          distance: 1.0,
+          confidence: 0,
+          isMatch: false,
+          status: 'missing_profile',
+          explanation: 'No registered beneficiary portraits exist in database to match against.',
+        });
+      }
+    } catch (err: any) {
+      console.error('Deep snapshot analysis failed:', err);
+    } finally {
+      setIsDeepScanning(false);
+    }
   };
 
-  const triggerUploadFallback = (dataUrl: string) => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-    setScannedPhoto(dataUrl);
-    setScanState('comparing');
+  const retakeCamera = () => {
+    setCapturedSnapshot(null);
+    setDeepScanResult(null);
   };
+
+  // Toggle Camera
+  const toggleFacingMode = () => {
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextMode);
+    startCamera(nextMode);
+  };
+
+  const handleCloseOrBack = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (onClose) {
+      onClose();
+    } else {
+      window.history.back();
+    }
+  }, [onClose]);
+
+  const targetHasPhoto = targetBeneficiary ? !!targetBeneficiary.photo && targetBeneficiary.photo.trim().length > 0 : true;
 
   return (
-    <div className="space-y-4">
-      {/* 1. Preloader while weights load */}
-      {!isModelsLoaded && (
-        <div className="bg-slate-950 rounded-xl overflow-hidden shadow-inner border-2 border-slate-800 p-8 flex flex-col items-center justify-center min-h-[300px]">
-          <RefreshCw className="w-10 h-10 text-emerald-400 animate-spin mb-3" />
-          <h4 className="text-xs font-bold text-slate-200 uppercase tracking-widest font-mono">
-            Loading Biometric Core Models
-          </h4>
-          <p className="text-[10px] text-slate-400 mt-1 mb-4 text-center max-w-[260px] leading-relaxed">
-            Fetching deep neural network models and landmark vectors to support modern, local browser face recognition...
-          </p>
-          <div className="w-48 bg-slate-800 h-1.5 rounded-full overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-300"
-              style={{ width: `${modelsLoadingPercent}%` }}
-            ></div>
-          </div>
-          <span className="text-[9px] text-emerald-400 font-mono mt-1.5">{modelsLoadingPercent}% loaded</span>
-        </div>
-      )}
+    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+        
+        {/* Header Bar */}
+        <div className="bg-slate-900/95 border-b border-slate-800 px-3.5 sm:px-4 py-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            {/* Primary Back Button */}
+            <button
+              onClick={handleCloseOrBack}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 transition cursor-pointer shrink-0 shadow-sm"
+              title="Return to previous screen"
+            >
+              <ArrowLeft className="w-4 h-4 text-emerald-400" />
+              <span className="font-sans">Back</span>
+            </button>
 
-      {/* Interactive Helper panel (Only when models are ready) */}
-      {isModelsLoaded && (
-        <div className="bg-emerald-50/70 border border-emerald-100 rounded-lg p-3 text-xs">
-          <div className="flex flex-col gap-2">
-            {targetBeneficiary && (
-              <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-emerald-100 mb-1 shadow-sm">
-                <div className="w-9 h-11 rounded border border-slate-200 overflow-hidden shrink-0 bg-slate-50">
-                  {targetBeneficiary.photo ? (
-                    <img src={targetBeneficiary.photo} referrerPolicy="no-referrer" alt="Reference target" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="text-[7.5px] font-bold text-center text-slate-400 font-mono mt-4 leading-none">NO PHOTO</div>
-                  )}
-                </div>
-                <div className="flex-grow min-w-0">
-                  <span className="text-[9px] uppercase font-bold text-emerald-800 tracking-wider font-mono">Target Verification Active:</span>
-                  <h5 className="font-bold text-slate-800 text-xs truncate leading-snug">{targetBeneficiary.name}</h5>
-                  <p className="text-[10px] text-slate-500 font-mono leading-none mt-0.5">UID: {targetBeneficiary.id} | NID: {targetBeneficiary.nidOrBirthCert}</p>
-                </div>
-              </div>
-            )}
-            
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <span className="font-semibold text-emerald-800 block">Biometric Calibration</span>
-                <p className="text-slate-500 text-[10px]">
-                  CNN status: <strong className={isFaceApiLoaded ? "text-emerald-700" : "text-amber-700"}>{isFaceApiLoaded ? "Active (Local GPU)" : "Bypassed (Cloud Autonomic)"}</strong> | Profiles: <strong className="text-emerald-700">{isFaceApiLoaded ? `${candidateDescriptors.length} precompiled` : "Cloud Optimized"}</strong>
-                </p>
-              </div>
-              <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                GENUINE MODE
-              </div>
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0 hidden sm:flex">
+              <Scan className="w-4 h-4 text-emerald-400 animate-pulse" />
             </div>
-
-            <div className="mt-2 bg-white/70 rounded-lg p-1 border border-emerald-100/60 flex flex-col gap-1">
-              <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider block px-1 font-mono">Verification Method Selector:</span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
-                <button
-                  type="button"
-                  onClick={() => setVerificationEngine('local-descriptor')}
-                  className={`text-[10px] py-1 px-1.5 rounded font-medium transition text-center cursor-pointer ${
-                    verificationEngine === 'local-descriptor'
-                      ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60'
-                  }`}
-                >
-                  Local CNN
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVerificationEngine('local-geometry')}
-                  className={`text-[10px] py-1 px-1.5 rounded font-medium transition text-center cursor-pointer ${
-                    verificationEngine === 'local-geometry'
-                      ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60'
-                  }`}
-                >
-                  Local Landmarks
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVerificationEngine('local-visual')}
-                  className={`text-[10px] py-1 px-1.5 rounded font-medium transition text-center cursor-pointer ${
-                    verificationEngine === 'local-visual'
-                      ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60'
-                  }`}
-                >
-                  Local CV Pixel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVerificationEngine('cloud-gemini')}
-                  className={`text-[10px] py-1 px-1.5 rounded font-medium transition text-center cursor-pointer ${
-                    verificationEngine === 'cloud-gemini'
-                      ? 'bg-emerald-600 text-white shadow-sm font-bold'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60'
-                  }`}
-                >
-                  Cloud Gemini 3.5
-                </button>
-              </div>
-              <p className="text-[9px] text-slate-500 italic px-1 mt-0.5 leading-tight font-mono">
-                {verificationEngine === 'local-descriptor' && "Uses browser-side 128-dimensional Deep Learning vector distance matching. 100% offline-safe."}
-                {verificationEngine === 'local-geometry' && "Uses structural 3D facial landmark alignment & MAE ratio comparison. Fast & lightweight."}
-                {verificationEngine === 'local-visual' && "Uses high-precision classical computer vision grayscale pixel-by-pixel structural correlation. Highly resilient."}
-                {verificationEngine === 'cloud-gemini' && "Sends frame to Google Cloud proxy for cutting-edge Multimodal face inspection. Highly accurate."}
+            <div className="min-w-0">
+              <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2 truncate">
+                <span>Face Biometrics</span>
+                <span className="text-[9px] sm:text-[10px] font-mono font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded shrink-0">
+                  128D AI
+                </span>
+              </h3>
+              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
+                {targetBeneficiary
+                  ? `Verifying: ${targetBeneficiary.name}`
+                  : `Scanning against ${registeredProfiles.length} registered profiles`}
               </p>
             </div>
           </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              title="Biometric Settings"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleCloseOrBack}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              title="Close scanner"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
-      )}
 
-      {/* 2. Camera Viewport */}
-      {isModelsLoaded && (
-        <>
-          {cameraError && scanState !== 'scanning' && (
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 text-center">
-              <p className="mb-3 text-[11px] leading-relaxed">{cameraError}</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                <label className="bg-amber-600 hover:bg-amber-700 text-white font-medium px-4 py-1.5 rounded text-[11px] cursor-pointer inline-flex items-center gap-1">
-                  Upload Selfie Snapshot
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (re) => {
-                          if (re.target?.result) {
-                            triggerUploadFallback(re.target.result as string);
-                          }
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                  />
-                </label>
-                <button
-                  onClick={toggleFacingMode}
-                  className="bg-slate-800 hover:bg-slate-900 text-white border border-slate-700 font-medium px-4 py-1.5 rounded text-[11px] flex items-center gap-1.5 cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-                  Rotate Camera (to {facingMode === 'user' ? 'Rear' : 'Front'})
-                </button>
-                <button
-                  onClick={startOver}
-                  className="bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-medium px-4 py-1.5 rounded text-[11px] flex items-center gap-1"
-                >
-                  Retry
-                </button>
+        {/* Liveness / Anti-Spoofing Toolbar (Default OFF for instant crowd scanning) */}
+        <div className="bg-slate-850 border-b border-slate-800 px-3.5 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2.5">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <div className="relative inline-flex items-center">
+                <input
+                  type="checkbox"
+                  checked={enableLiveness}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setEnableLiveness(checked);
+                    setLivenessPassed(false);
+                    isEyeClosedRef.current = false;
+                    blinkCounterRef.current = 0;
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-8 h-4 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
               </div>
-            </div>
-          )}
+              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Enable Liveness / Anti-Spoofing</span>
+              </span>
+            </label>
 
-          <div className="relative w-full max-w-sm mx-auto aspect-square bg-slate-950 rounded-xl overflow-hidden shadow-inner border-2 border-slate-200 flex items-center justify-center">
-            {scanState === 'idle' && (
-              <div className="text-center p-4">
-                <Camera className="w-8 h-8 text-slate-500 mx-auto mb-2 animate-pulse" />
-                <p className="text-xs text-slate-400 font-mono text-[10px]">Camera Offline. Please use manual upload or verify permissions.</p>
-              </div>
-            )}
-
-            {/* Always mounted video elements to avoid react DOM ref binding updates or delays */}
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className={`absolute inset-0 w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''} ${scanState === 'scanning' ? 'block' : 'hidden'}`}
-            />
-
-            {/* Tracking Canvas for Real-Time Face mesh over Mirrored Stream */}
-            <canvas
-              ref={canvasRef}
-              className={`absolute inset-0 w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''} pointer-events-none z-10 ${scanState === 'scanning' ? 'block' : 'hidden'}`}
-            />
-
-            {scanState === 'initializing' && (
-              <div className="text-center p-4">
-                <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mx-auto mb-2" />
-                <p className="text-xs text-slate-400 font-mono text-[10px]">Calibrating Camera Grid Matrix...</p>
-              </div>
-            )}
-
-            {/* Video feed overlay */}
-            {scanState === 'scanning' && (
-              <>
-                {/* Camera Rotate button */}
-                <button
-                  onClick={toggleFacingMode}
-                  className="absolute top-4 right-4 bg-slate-900/85 hover:bg-slate-900 text-white p-2 rounded-full border border-slate-700 shadow-lg z-30 transition cursor-pointer flex items-center justify-center gap-1.5"
-                  title="Rotate Camera (Front/Rear)"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin-hover" />
-                  <span className="text-[9px] font-bold uppercase tracking-wider pr-1 font-mono text-emerald-100">Rotate Camera</span>
-                </button>
-
-                {/* Additional Glowing Targeting Crosshairs HUD */}
-                <div className="absolute inset-0 border-[3px] border-emerald-500/20 m-4 rounded-xl pointer-events-none flex items-center justify-center">
-                  <div className="absolute top-2 left-2 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-sm"></div>
-                  <div className="absolute top-2 right-2 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-sm"></div>
-                  <div className="absolute bottom-2 left-2 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-sm"></div>
-                  <div className="absolute bottom-2 right-2 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-sm"></div>
-
-                  <div className="absolute top-4 left-4 font-mono text-[8px] text-emerald-400/60 font-semibold uppercase tracking-wider">
-                    SENS-GRID-v2 // READY
-                  </div>
-                </div>
-
-                {/* Live Trigger Snapshot Action */}
-                <div className="absolute bottom-4 inset-x-0 flex justify-center px-4 z-20">
-                  <button
-                    onClick={captureFrame}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] py-2 px-5 rounded-full shadow-lg flex items-center gap-1.5 tracking-wider uppercase border border-emerald-400 cursor-pointer animate-in fade-in-50 duration-300"
-                  >
-                    <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-ping"></div>
-                    Scan Biometric ID
-                  </button>
-                </div>
-              </>
-            )}
-
-            {/* Database Search Correlation Screen */}
-            {scanState === 'comparing' && (
-              <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
-                {scannedPhoto && scannedPhoto !== 'MOCK_SELFIE_PIC' ? (
-                  <img
-                    src={scannedPhoto}
-                    alt="Captured Face"
-                    className="w-24 h-24 object-cover rounded-full border-2 border-emerald-400 shadow-md mb-4 animate-pulse opacity-80"
-                  />
-                ) : (
-                  <div className="w-24 h-24 rounded-full border-2 border-emerald-500 border-dashed animate-spin flex items-center justify-center text-emerald-400 text-xs mb-4">
-                    BIOMETRICS
-                  </div>
-                )}
-
-                <div className="w-full max-w-xs bg-slate-900 border border-slate-800 rounded-lg p-3">
-                  <div className="flex justify-between text-[10px] text-emerald-400 font-mono mb-1">
-                    <span>DATABASE PROGRESS</span>
-                    <span>{simulatedProgress}%</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                    <div
-                      className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full transition-all duration-150"
-                      style={{ width: `${simulatedProgress}%` }}
-                    ></div>
-                  </div>
-
-                  {/* High-speed cycle labels */}
-                  <div className="mt-3 text-[11px] text-slate-300 font-mono flex items-center justify-center gap-1.5">
-                    <RefreshCw className="w-3 h-3 text-emerald-400 animate-spin" />
-                    <span>
-                      {isVerifying ? (
-                        <span className="text-emerald-400 animate-pulse font-semibold">Gemini deep recognition matching...</span>
-                      ) : (
-                        <>
-                          Correlating:{' '}
-                          {activeFaceIndex >= 0 && beneficiaries[activeFaceIndex]
-                            ? beneficiaries[activeFaceIndex].name.substring(0, 16) + '...'
-                            : 'System Records'}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Match Found Success */}
-            {scanState === 'success' && (
-              <div className="absolute inset-0 bg-emerald-950/95 flex flex-col items-center justify-center p-6 text-center">
-                <CheckCircle className="w-12 h-12 text-emerald-400 mb-2 animate-bounce" />
-                <h4 className="text-sm font-bold text-emerald-100 font-mono uppercase tracking-widest">
-                  Biometric Match Validated
-                </h4>
-                <p className="text-xs text-emerald-300 mt-1">
-                  Identity found in record database. Transferring profile desk...
-                </p>
-                {reasoning && (
-                  <p className="text-[10px] text-emerald-200 mt-3 font-mono bg-emerald-900/40 p-2 rounded border border-emerald-800/30 max-w-xs leading-relaxed">
-                    {reasoning}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Match Missed / Unknown Face / Fail */}
-            {scanState === 'failure' && (
-              <div className="absolute inset-0 bg-rose-950/95 flex flex-col items-center justify-center p-6 text-center overflow-y-auto">
-                <AlertTriangle className="w-10 h-10 text-rose-400 mb-1 animate-pulse" />
-                <h4 className="text-xs font-bold text-rose-100 font-mono uppercase tracking-widest">
-                  No Biometric Match Found
-                </h4>
-                <p className="text-[11px] text-rose-300 mt-0.5 mb-2">
-                  This face could not be linked to any registered profile in the server database.
-                </p>
-                {reasoning && (
-                  <p className="text-[10px] text-rose-200 mb-3 font-mono bg-rose-900/40 p-2 rounded border border-rose-800/30 max-w-xs leading-relaxed">
-                    {reasoning}
-                  </p>
-                )}
-                <div className="flex flex-col gap-1.5 w-full max-w-xs">
-                  <button
-                    onClick={() => onNoMatchFound(scannedPhoto || '')}
-                    className="bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs py-1.5 px-4 rounded-lg flex items-center justify-center gap-1.5 border border-rose-400 cursor-pointer"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    Register As New Beneficiary
-                  </button>
-                  <button
-                    onClick={startOver}
-                    className="bg-transparent hover:bg-slate-900 border border-slate-700 text-slate-300 text-[10px] py-1 rounded-lg cursor-pointer"
-                  >
-                    Rescan / Recalibrate Camera
-                  </button>
-                </div>
-              </div>
+            {enableLiveness ? (
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1 ${
+                livenessPassed
+                  ? 'bg-emerald-950 text-emerald-300 border-emerald-800 font-bold'
+                  : 'bg-amber-950/80 text-amber-300 border-amber-800 animate-pulse'
+              }`}>
+                {livenessPassed ? '✓ Blink Verified' : 'Blink eyes to verify'}
+              </span>
+            ) : (
+              <span className="text-[10px] font-mono text-slate-400 bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-700">
+                Instant Crowd Mode (Default)
+              </span>
             )}
           </div>
-        </>
-      )}
 
-      {/* Hidden storage for screenshotting stream */}
-      <canvas ref={captureCanvasRef} className="hidden" />
+          <div className="flex items-center gap-2 sm:gap-3 text-[10px] text-slate-400">
+            <span className="hidden sm:inline">
+              Threshold: <strong className="text-emerald-400 font-mono">&lt; 0.48</strong> Confirmed / <strong className="text-teal-400 font-mono">0.58</strong> Acceptable
+            </span>
+            <span>
+              Profiles: <strong className="text-white font-mono">{registeredProfiles.length}</strong>
+            </span>
+          </div>
+        </div>
 
-      {/* Visual instructions list */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 text-xs text-slate-600">
-        <h5 className="font-semibold text-slate-800 mb-1.5">Real-Time Biometric Operations:</h5>
-        <ul className="list-disc pl-4 space-y-1 text-[11px] leading-relaxed">
-          <li><strong>Direct Browser Matching:</strong> Once a beneficiary's photo is snapped and saved at registration, their mathematical biometric vector is precompiled into active memory. When they scan, they are authenticated strictly local-first with zero lag!</li>
-          <li><strong>Cloud Multimodal Verification:</strong> A state-of-the-art server-side neural filter validates facial features against the stored database automatically if browser processing skips.</li>
-        </ul>
+        {/* Optional Threshold Settings Drawer */}
+        {showSettings && (
+          <div className="bg-slate-850 border-b border-slate-750 px-4 py-2.5 flex items-center justify-between text-xs text-slate-300">
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-slate-200">Matching Confidence Threshold:</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="45"
+                  max="85"
+                  value={confidenceThreshold}
+                  onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                  className="accent-emerald-500 cursor-pointer w-28"
+                />
+                <span className="font-mono font-bold text-emerald-400">{confidenceThreshold}%</span>
+              </div>
+            </div>
+            <span className="text-[10px] text-slate-400">
+              Profiles with photos: <strong className="text-white">{registeredProfiles.length}</strong> / {beneficiaries.length}
+            </span>
+          </div>
+        )}
+
+        {/* Neural Models Loading Banner */}
+        {modelsLoading && (
+          <div className="bg-slate-850 p-6 flex flex-col items-center justify-center text-center gap-3">
+            <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
+            <div>
+              <h4 className="text-sm font-bold text-white mb-1">{modelsStatusText}</h4>
+              <p className="text-xs text-slate-400">Loading lightweight CNN weights for instantaneous in-browser recognition</p>
+            </div>
+            <div className="w-64 bg-slate-700 rounded-full h-2 overflow-hidden mt-1">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-300 rounded-full"
+                style={{ width: `${modelsProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Main Scanner Body */}
+        {!modelsLoading && (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-0 overflow-y-auto flex-1">
+            
+            {/* Left: Camera & Canvas Viewport (7 cols on md) */}
+            <div className="md:col-span-7 bg-black flex flex-col items-center justify-center relative min-h-[300px] sm:min-h-[360px] border-b md:border-b-0 md:border-r border-slate-800">
+              
+              {cameraError ? (
+                <div className="p-6 text-center max-w-sm">
+                  <VideoOff className="w-10 h-10 text-amber-400 mx-auto mb-3" />
+                  <h4 className="text-sm font-bold text-white mb-1">Camera Feed Unavailable</h4>
+                  <p className="text-xs text-slate-400 mb-4">{cameraError}</p>
+                  <button
+                    onClick={() => startCamera(facingMode)}
+                    className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-lg inline-flex items-center gap-2 cursor-pointer transition border border-slate-700"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Retry Camera
+                  </button>
+                </div>
+              ) : capturedSnapshot ? (
+                // Snapshot Preview
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <img
+                    src={capturedSnapshot}
+                    alt="Captured Scan Frame"
+                    className="max-h-[360px] w-full object-contain"
+                  />
+                  <div className="absolute top-3 left-3 bg-slate-900/90 text-white text-[11px] font-mono px-2.5 py-1 rounded-md border border-slate-700 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                    High-Res Frozen Snapshot
+                  </div>
+                </div>
+              ) : (
+                // Live Video & Canvas Overlay
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full max-h-[360px] object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
+                  />
+                  <canvas
+                    ref={canvasRef}
+                    className={`absolute inset-0 w-full h-full pointer-events-none ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
+                  />
+
+                  {/* Live Status Overlay Pill */}
+                  <div className="absolute top-3 left-3 flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-bold shadow-md ${
+                      liveMatchResult?.isMatch
+                        ? 'bg-emerald-600 text-white border border-emerald-400 animate-pulse'
+                        : faceDetected
+                        ? 'bg-amber-600/90 text-white border border-amber-400'
+                        : 'bg-slate-900/90 text-slate-300 border border-slate-700'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        liveMatchResult?.isMatch ? 'bg-white' : faceDetected ? 'bg-amber-300' : 'bg-slate-400'
+                      }`} />
+                      {liveMatchResult?.isMatch
+                        ? `MATCH: ${liveMatchResult.confidence}%`
+                        : faceDetected
+                        ? 'TRACKING FACE...'
+                        : 'ALIGN FACE IN FRAME'}
+                    </span>
+                  </div>
+
+                  {/* Camera flip button */}
+                  <button
+                    onClick={toggleFacingMode}
+                    className="absolute top-3 right-3 bg-slate-900/80 hover:bg-slate-800 text-white p-2 rounded-full border border-slate-700 transition cursor-pointer shadow-md"
+                    title="Switch Camera (Front/Back)"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Anti-Spoofing Prompt when liveness enabled */}
+                  {enableLiveness && !livenessPassed && faceDetected && (
+                    <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-amber-500/60 text-amber-300 text-[11px] px-3 py-1 rounded-full flex items-center gap-1.5 shadow-lg backdrop-blur-sm pointer-events-none animate-pulse">
+                      <Eye className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="font-semibold">Anti-Spoofing: Please blink eyes (চোখ পলক ফেলুন)</span>
+                    </div>
+                  )}
+
+                  {/* Auto-Lock Progress Bar across bottom of video */}
+                  {autoLockProgress > 0 && (
+                    <div className="absolute bottom-0 inset-x-0 bg-slate-950/80 p-2 flex items-center justify-between text-xs text-white">
+                      <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                        Verifying Match... Hold steady
+                      </div>
+                      <div className="w-32 bg-slate-700 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-emerald-500 h-full transition-all duration-100"
+                          style={{ width: `${autoLockProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Viewport Control Bar */}
+              <div className="w-full bg-slate-950 border-t border-slate-800 p-2.5 flex items-center justify-between gap-2">
+                {capturedSnapshot ? (
+                  <button
+                    onClick={retakeCamera}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    Resume Live Camera
+                  </button>
+                ) : (
+                  <button
+                    onClick={captureSnapshot}
+                    disabled={!cameraActive}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    Capture Snapshot
+                  </button>
+                )}
+
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {cameraActive ? '● Live 30FPS Stream' : 'Camera Inactive'}
+                </span>
+              </div>
+            </div>
+
+            {/* Right: Verification Analytics & Confirmation Desk (5 cols on md) */}
+            <div className="md:col-span-5 bg-slate-900 p-4 flex flex-col justify-between gap-4">
+              
+              <div className="space-y-4">
+                
+                {/* Target Profile Card (When Verifying a Specific Person) */}
+                {targetBeneficiary && (
+                  <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 font-mono">
+                        Target Verification Profile:
+                      </span>
+                      <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded font-mono">
+                        UID: {targetBeneficiary.id}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="w-14 h-16 rounded-lg bg-slate-700 border border-slate-600 overflow-hidden shrink-0 flex items-center justify-center">
+                        {targetBeneficiary.photo ? (
+                          <img
+                            src={targetBeneficiary.photo}
+                            alt={targetBeneficiary.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="text-center p-1">
+                            <Eye className="w-5 h-5 text-slate-500 mx-auto" />
+                            <span className="text-[8px] text-slate-400 block mt-0.5">No Photo</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-bold text-white truncate">{targetBeneficiary.name}</h4>
+                        <p className="text-[11px] text-slate-400 truncate">NID: {targetBeneficiary.nidOrBirthCert}</p>
+                        <p className="text-[11px] text-slate-400 truncate">{targetBeneficiary.address}</p>
+
+                        {!targetHasPhoto && (
+                          <span className="inline-block mt-1 text-[9px] bg-amber-950 text-amber-300 border border-amber-800 px-1.5 py-0.5 rounded font-semibold">
+                            ⚠️ Missing Registered Portrait
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Match Evaluation Result Box */}
+                <div className="bg-slate-850 border border-slate-750 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono">
+                      Real-Time Likeness Matrix:
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {liveMatchResult?.distance !== undefined && (
+                        <span className="text-[10px] font-mono text-slate-400">
+                          Dist: <strong className="text-slate-200">{liveMatchResult.distance.toFixed(3)}</strong>
+                        </span>
+                      )}
+                      <span className={`text-xs font-mono font-bold ${
+                        (liveMatchResult?.confidence || deepScanResult?.confidence || 0) >= confidenceThreshold
+                          ? 'text-emerald-400'
+                          : 'text-amber-400'
+                      }`}>
+                        {liveMatchResult?.confidence !== undefined
+                          ? `${liveMatchResult.confidence}%`
+                          : deepScanResult?.confidence !== undefined
+                          ? `${deepScanResult.confidence}%`
+                          : '0%'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Distance Category Tag */}
+                  {liveMatchResult && (
+                    <div className="flex items-center justify-between text-[10px] font-mono">
+                      <span className="text-slate-400">Classification:</span>
+                      {liveMatchResult.distance < 0.50 ? (
+                        <span className="bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                          ✓ Confirmed Match (&lt; 0.50)
+                        </span>
+                      ) : liveMatchResult.distance <= 0.62 ? (
+                        <span className="bg-teal-950 text-teal-300 border border-teal-800 px-1.5 py-0.5 rounded font-semibold">
+                          ✓ Verified Match (0.50 - 0.62)
+                        </span>
+                      ) : (
+                        <span className="bg-rose-950 text-rose-300 border border-rose-800 px-1.5 py-0.5 rounded font-bold">
+                          ❌ Not Verified (&gt; 0.62)
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Animated Confidence Meter Bar */}
+                  <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden p-0.5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-200 ${
+                        (liveMatchResult?.confidence || deepScanResult?.confidence || 0) >= confidenceThreshold
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                          : 'bg-gradient-to-r from-amber-500 to-rose-400'
+                      }`}
+                      style={{
+                        width: `${Math.max(
+                          4,
+                          liveMatchResult?.confidence || deepScanResult?.confidence || 0
+                        )}%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Status Text & Dynamic Guidance */}
+                  <div className="pt-1">
+                    {liveMatchResult?.isMatch || deepScanResult?.isMatch ? (
+                      <div className="flex items-start gap-2 bg-emerald-950/40 border border-emerald-800/80 rounded-lg p-2.5 text-emerald-400 text-xs">
+                        <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+                        <div>
+                          <strong className="block text-white">Biometric Identity Verified / শনাক্ত হয়েছে</strong>
+                          <span className="text-emerald-200/80 text-[11px]">
+                            Live facial vectors align with {liveMatchResult?.beneficiary?.name || targetBeneficiary?.name} with high mathematical precision.
+                          </span>
+                        </div>
+                      </div>
+                    ) : faceDetected && liveMatchResult && !liveMatchResult.isMatch ? (
+                      <div className="flex items-start gap-2 bg-rose-950/40 border border-rose-800/80 rounded-lg p-2.5 text-rose-300 text-xs">
+                        <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="block text-rose-200 font-bold">ভেরিফাইড না / Unverified Beneficiary</strong>
+                          <span className="text-rose-300/80 text-[11px] block mt-0.5">
+                            {targetBeneficiary
+                              ? `ক্যামেরায় পাওয়া মুখের সাথে ${targetBeneficiary.name}-এর মিল নেই (Euclidean Dist: ${liveMatchResult.distance.toFixed(3)} > 0.62)।`
+                              : `ক্যামেরায় পাওয়া মুখের সাথে রেজিস্টার্ড কোনো বেনিফিশিয়ারির মিল পাওয়া যায়নি (Closest Dist: ${liveMatchResult.distance.toFixed(3)} > 0.62)।`}
+                          </span>
+                        </div>
+                      </div>
+                    ) : faceDetected ? (
+                      <div className="flex items-start gap-2 text-amber-400 text-xs">
+                        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="block text-white">Evaluating Live Biometrics</strong>
+                          <span className="text-slate-300 text-[11px]">
+                            {targetBeneficiary
+                              ? `Likeness with ${targetBeneficiary.name} is ${liveMatchResult?.confidence || 0}% (Threshold: ${confidenceThreshold}%).`
+                              : 'Face detected in video. Comparing with registered database...'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2 text-slate-400 text-xs">
+                        <Eye className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>Position face directly in front of camera with normal lighting.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Deep scan explanation if available */}
+                  {deepScanResult?.explanation && (
+                    <p className="text-[10px] font-mono text-slate-400 bg-slate-900 p-2 rounded border border-slate-800">
+                      {deepScanResult.explanation}
+                    </p>
+                  )}
+                </div>
+
+                {/* General Scan: Detected Best Candidate Preview */}
+                {!targetBeneficiary && liveMatchResult?.beneficiary && (
+                  <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-lg bg-slate-700 overflow-hidden shrink-0 border border-slate-600">
+                        {liveMatchResult.beneficiary.photo ? (
+                          <img
+                            src={liveMatchResult.beneficiary.photo}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <UserCheck className="w-5 h-5 text-slate-400 m-auto mt-2" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[9px] font-mono uppercase text-emerald-400 font-bold block">
+                          Identified Member:
+                        </span>
+                        <h5 className="text-xs font-bold text-white truncate">
+                          {liveMatchResult.beneficiary.name}
+                        </h5>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          UID: {liveMatchResult.beneficiary.id}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleConfirmMatch(liveMatchResult.beneficiary!, liveMatchResult.confidence)}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-2 rounded-lg shrink-0 cursor-pointer shadow-sm transition flex items-center gap-1"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Select
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Action & Verification Decision Buttons */}
+              <div className="space-y-2 pt-2 border-t border-slate-800">
+                
+                {/* Primary Action Button */}
+                {(liveMatchResult?.isMatch || deepScanResult?.isMatch) && (
+                  <button
+                    onClick={() => {
+                      const match = targetBeneficiary || liveMatchResult?.beneficiary;
+                      if (match) {
+                        handleConfirmMatch(match, liveMatchResult?.confidence || deepScanResult?.confidence || 95);
+                      }
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/50 cursor-pointer transition"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    Confirm & Approve Match ({(liveMatchResult?.confidence || deepScanResult?.confidence || 95)}%)
+                  </button>
+                )}
+
+                {/* If Not Matched / Register New */}
+                {capturedSnapshot && !deepScanResult?.isMatch && (
+                  <button
+                    onClick={() => onNoMatchFound(capturedSnapshot)}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-4 rounded-xl flex items-center justify-center gap-2 border border-slate-700 cursor-pointer transition"
+                  >
+                    <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+                    Register New Beneficiary with this Snapshot
+                  </button>
+                )}
+
+                {/* Fallback Option: Search by NID / Phone / Name when camera has difficulty */}
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-slate-300 font-mono flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-emerald-400" />
+                      NID / Phone Fallback Search
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-mono">Camera Bypass</span>
+                  </div>
+
+                  {targetBeneficiary ? (
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmMatch(targetBeneficiary, 100)}
+                      className="w-full bg-slate-800 hover:bg-amber-700 hover:text-white text-amber-300 font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer border border-amber-900/50"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5 text-amber-400" />
+                      Manual Staff Clearance for {targetBeneficiary.name}
+                    </button>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="Search NID, Mobile, or Name..."
+                          className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-lg pl-8 pr-7 py-2 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-sans"
+                        />
+                        {searchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            className="absolute right-2.5 top-2 text-slate-400 hover:text-white text-xs font-bold"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Live Filtered Search Results */}
+                      {searchQuery.trim().length > 0 && (
+                        <div className="max-h-36 overflow-y-auto space-y-1.5 border-t border-slate-800/80 pt-2">
+                          {filteredBeneficiaries.length === 0 ? (
+                            <p className="text-[11px] text-slate-500 italic py-1 text-center">
+                              No beneficiary found matching '{searchQuery}'
+                            </p>
+                          ) : (
+                            filteredBeneficiaries.map((b) => (
+                              <div
+                                key={b.id}
+                                className="bg-slate-900 hover:bg-slate-850 p-2 rounded-lg border border-slate-800 flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-white truncate">{b.name}</p>
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                                    <span>NID: {b.nidOrBirthCert}</span>
+                                    {b.mobile && <span>• {b.mobile}</span>}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmMatch(b, 100)}
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-2.5 py-1 rounded-md shrink-0 transition flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  Select
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+
+                      {/* Direct Dropdown when not searching */}
+                      {!searchQuery && (
+                        <select
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 font-sans outline-none cursor-pointer"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            if (selectedId) {
+                              const chosen = beneficiaries.find((b) => b.id === selectedId);
+                              if (chosen) {
+                                handleConfirmMatch(chosen, 100);
+                              }
+                            }
+                          }}
+                        >
+                          <option value="" disabled>
+                            -- Or select registered member directly --
+                          </option>
+                          {beneficiaries.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name} (NID: {b.nidOrBirthCert || b.id})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Return / Close Scanner Button */}
+                <button
+                  type="button"
+                  onClick={handleCloseOrBack}
+                  className="w-full bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4 text-emerald-400" />
+                  <span>Return to Previous Page</span>
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
       </div>
     </div>
   );

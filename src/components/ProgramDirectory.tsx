@@ -720,26 +720,20 @@ export default function ProgramDirectory({
 
           </div>
 
-          {/* Biometric scanning screen popups */}
+          {/* Biometric scanning screen modal */}
           {deskFaceScanOpen && (
-            <div className="bg-slate-900/60 backdrop-blur-sm fixed inset-0 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl p-4 max-w-sm w-full relative">
-                <button
-                  onClick={() => setDeskFaceScanOpen(false)}
-                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 border rounded-full w-5 h-5 flex items-center justify-center font-bold"
-                >
-                  &times;
-                </button>
-                <FaceScanner
-                  beneficiaries={beneficiaries}
-                  onMatchFound={(b) => handleFaceScannerMatch(b)}
-                  onNoMatchFound={(frame) => {
-                    setDeskFaceScanOpen(false);
-                    showDeskAlert('error', "No matching profiles detected. Register this beneficiary inside global directory first!");
-                  }}
-                />
-              </div>
-            </div>
+            <FaceScanner
+              beneficiaries={beneficiaries}
+              onClose={() => setDeskFaceScanOpen(false)}
+              onMatchFound={(b) => {
+                setDeskFaceScanOpen(false);
+                handleFaceScannerMatch(b);
+              }}
+              onNoMatchFound={(frame) => {
+                setDeskFaceScanOpen(false);
+                showDeskAlert('error', "No matching profiles detected. Register this beneficiary inside global directory first!");
+              }}
+            />
           )}
 
         </div>

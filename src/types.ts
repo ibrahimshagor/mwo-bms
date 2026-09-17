@@ -53,6 +53,7 @@ export interface Beneficiary {
   gender: GenderType;
   address: string;
   photo: string; // Base64 Data URL or SVG string
+  faceDescriptor?: number[]; // 128-dimensional biometric floating point vector
   signature: string; // Base64 signature image drawn on canvas
   createdAdmin: string; // Username/ID of admin who created
   updatedAdmin?: string; // Username/ID of last admin who modified

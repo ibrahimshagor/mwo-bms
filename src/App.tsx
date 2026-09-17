@@ -32,6 +32,18 @@ function handleFirestoreError(
 
     throw new Error(JSON.stringify(errorPayload));
   }
+
+  // Gracefully handle offline or unreachable Firestore backend
+  if (
+    error?.code === 'unavailable' || 
+    error?.message?.includes('unavailable') || 
+    error?.message?.includes('offline') || 
+    error?.message?.includes('Could not reach Cloud Firestore')
+  ) {
+    console.warn(`Firestore backend operates in offline cache mode for collection: ${collectionName} (${operation}).`);
+    return;
+  }
+
   throw error;
 }
 
@@ -57,6 +69,7 @@ import ProgramCreate from './components/ProgramCreate';
 import UserManagement from './components/UserManagement';
 import ProgramDirectory from './components/ProgramDirectory';
 import BeneficiaryDirectory from './components/BeneficiaryDirectory';
+import BiometricVerificationDesk from './components/BiometricVerificationDesk';
 import Footer from './components/Footer';
 import ExportControlPanel from './components/ExportControlPanel';
 
@@ -64,7 +77,7 @@ import ExportControlPanel from './components/ExportControlPanel';
 import { 
   FolderLock, UserCog, ClipboardList, Users, ShieldAlert, KeyRound, 
   Settings, LogOut, CheckCircle, Database, HelpCircle, ArrowRight,
-  TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X
+  TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X, Scan, ArrowLeft
 } from 'lucide-react';
 
 export default function App() {
@@ -102,7 +115,14 @@ export default function App() {
 
   // 3. Navigation controls
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [previousTab, setPreviousTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const navigateToTab = (tab: string) => {
+    setPreviousTab(activeTab);
+    setActiveTab(tab);
+    setIsMobileMenuOpen(false);
+  };
   
   // Editing states (Forms overlays controllers)
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
@@ -193,9 +213,10 @@ export default function App() {
         try {
           handleFirestoreError(error, 'list', 'users');
         } catch (e: any) {
-          console.error("Firestore users listener error:", e.message);
           if (e.message?.includes('permission-denied')) {
             setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore users listener in offline mode:", e.message);
           }
         }
       }
@@ -236,9 +257,10 @@ export default function App() {
         try {
           handleFirestoreError(error, 'list', 'programs');
         } catch (e: any) {
-          console.error("Firestore programs listener error:", e.message);
           if (e.message?.includes('permission-denied')) {
             setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore programs listener in offline mode:", e.message);
           }
         }
       }
@@ -278,9 +300,10 @@ export default function App() {
         try {
           handleFirestoreError(error, 'list', 'beneficiaries');
         } catch (e: any) {
-          console.error("Firestore beneficiaries listener error:", e.message);
           if (e.message?.includes('permission-denied')) {
             setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore beneficiaries listener in offline mode:", e.message);
           }
         }
       }
@@ -321,9 +344,10 @@ export default function App() {
         try {
           handleFirestoreError(error, 'list', 'service_records');
         } catch (e: any) {
-          console.error("Firestore service_records listener error:", e.message);
           if (e.message?.includes('permission-denied')) {
             setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore service_records listener in offline mode:", e.message);
           }
         }
       }
@@ -475,17 +499,24 @@ export default function App() {
       setActiveTab('beneficiaries');
 
       // Sync with Firestore in background
-      const cleanB = JSON.parse(JSON.stringify(b));
-      await setDoc(doc(db, 'beneficiaries', b.id), cleanB);
-    } catch (err) {
-      // Revert if background sync fails
-      setBeneficiaries(prevBeneficiaries);
-      saveState('mwo_beneficiaries', prevBeneficiaries);
       try {
-        handleFirestoreError(err, 'write', 'beneficiaries', b.id);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        const cleanB = JSON.parse(JSON.stringify(b));
+        await setDoc(doc(db, 'beneficiaries', b.id), cleanB);
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setBeneficiaries(prevBeneficiaries);
+          saveState('mwo_beneficiaries', prevBeneficiaries);
+          try {
+            handleFirestoreError(err, 'write', 'beneficiaries', b.id);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'write', 'beneficiaries', b.id);
+        }
       }
+    } catch (err: any) {
+      console.warn("Beneficiary save error:", err);
     }
   };
 
@@ -504,16 +535,24 @@ export default function App() {
       setActiveTab('programs');
 
       // Sync with Firestore in background
-      const cleanP = JSON.parse(JSON.stringify(p));
-      await setDoc(doc(db, 'programs', p.id), cleanP);
-    } catch (err) {
-      setPrograms(prevPrograms);
-      saveState('mwo_programs', prevPrograms);
       try {
-        handleFirestoreError(err, 'write', 'programs', p.id);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        const cleanP = JSON.parse(JSON.stringify(p));
+        await setDoc(doc(db, 'programs', p.id), cleanP);
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setPrograms(prevPrograms);
+          saveState('mwo_programs', prevPrograms);
+          try {
+            handleFirestoreError(err, 'write', 'programs', p.id);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'write', 'programs', p.id);
+        }
       }
+    } catch (err: any) {
+      console.warn("Program save error:", err);
     }
   };
 
@@ -531,16 +570,24 @@ export default function App() {
       triggerToast('success', `Administrative account "${u.name}" saved successfully!`);
 
       // Sync with Firestore in background
-      const cleanU = JSON.parse(JSON.stringify(u));
-      await setDoc(doc(db, 'users', u.id), cleanU);
-    } catch (err) {
-      setUsers(prevUsers);
-      saveState('mwo_users', prevUsers);
       try {
-        handleFirestoreError(err, 'write', 'users', u.id);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        const cleanU = JSON.parse(JSON.stringify(u));
+        await setDoc(doc(db, 'users', u.id), cleanU);
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setUsers(prevUsers);
+          saveState('mwo_users', prevUsers);
+          try {
+            handleFirestoreError(err, 'write', 'users', u.id);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'write', 'users', u.id);
+        }
       }
+    } catch (err: any) {
+      console.warn("User save error:", err);
     }
   };
 
@@ -554,15 +601,23 @@ export default function App() {
       triggerToast('success', 'User account deleted successfully.');
 
       // Sync with Firestore in background
-      await deleteDoc(doc(db, 'users', userId));
-    } catch (err) {
-      setUsers(prevUsers);
-      saveState('mwo_users', prevUsers);
       try {
-        handleFirestoreError(err, 'delete', 'users', userId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        await deleteDoc(doc(db, 'users', userId));
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setUsers(prevUsers);
+          saveState('mwo_users', prevUsers);
+          try {
+            handleFirestoreError(err, 'delete', 'users', userId);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'delete', 'users', userId);
+        }
       }
+    } catch (err: any) {
+      console.warn("User delete error:", err);
     }
   };
 
@@ -582,20 +637,28 @@ export default function App() {
       triggerToast('success', 'Beneficiary record deleted successfully.');
 
       // Sync with Firestore in background
-      await deleteDoc(doc(db, 'beneficiaries', beneficiaryId));
-      for (const record of recordsToClean) {
-        await deleteDoc(doc(db, 'service_records', record.id));
-      }
-    } catch (err) {
-      setBeneficiaries(prevBeneficiaries);
-      saveState('mwo_beneficiaries', prevBeneficiaries);
-      setServiceRecords(prevSR);
-      saveState('mwo_service_records', prevSR);
       try {
-        handleFirestoreError(err, 'delete', 'beneficiaries', beneficiaryId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        await deleteDoc(doc(db, 'beneficiaries', beneficiaryId));
+        for (const record of recordsToClean) {
+          await deleteDoc(doc(db, 'service_records', record.id));
+        }
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setBeneficiaries(prevBeneficiaries);
+          saveState('mwo_beneficiaries', prevBeneficiaries);
+          setServiceRecords(prevSR);
+          saveState('mwo_service_records', prevSR);
+          try {
+            handleFirestoreError(err, 'delete', 'beneficiaries', beneficiaryId);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'delete', 'beneficiaries', beneficiaryId);
+        }
       }
+    } catch (err: any) {
+      console.warn("Beneficiary delete error:", err);
     }
   };
 
@@ -615,20 +678,28 @@ export default function App() {
       triggerToast('success', 'Program record deleted successfully.');
 
       // Sync with Firestore in background
-      await deleteDoc(doc(db, 'programs', programId));
-      for (const record of recordsToClean) {
-        await deleteDoc(doc(db, 'service_records', record.id));
-      }
-    } catch (err) {
-      setPrograms(prevPrograms);
-      saveState('mwo_programs', prevPrograms);
-      setServiceRecords(prevSR);
-      saveState('mwo_service_records', prevSR);
       try {
-        handleFirestoreError(err, 'delete', 'programs', programId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        await deleteDoc(doc(db, 'programs', programId));
+        for (const record of recordsToClean) {
+          await deleteDoc(doc(db, 'service_records', record.id));
+        }
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setPrograms(prevPrograms);
+          saveState('mwo_programs', prevPrograms);
+          setServiceRecords(prevSR);
+          saveState('mwo_service_records', prevSR);
+          try {
+            handleFirestoreError(err, 'delete', 'programs', programId);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'delete', 'programs', programId);
+        }
       }
+    } catch (err: any) {
+      console.warn("Program delete error:", err);
     }
   };
 
@@ -649,16 +720,24 @@ export default function App() {
       saveState('mwo_service_records', updatedSR);
 
       // Sync with Firestore in background
-      const cleanSR = JSON.parse(JSON.stringify(sr));
-      await setDoc(doc(db, 'service_records', sr.id), cleanSR);
-    } catch (err) {
-      setServiceRecords(prevSR);
-      saveState('mwo_service_records', prevSR);
       try {
-        handleFirestoreError(err, 'write', 'service_records', sr.id);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        const cleanSR = JSON.parse(JSON.stringify(sr));
+        await setDoc(doc(db, 'service_records', sr.id), cleanSR);
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setServiceRecords(prevSR);
+          saveState('mwo_service_records', prevSR);
+          try {
+            handleFirestoreError(err, 'write', 'service_records', sr.id);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'write', 'service_records', sr.id);
+        }
       }
+    } catch (err: any) {
+      console.warn("Service record save error:", err);
     }
   };
 
@@ -672,15 +751,23 @@ export default function App() {
       triggerToast('success', 'Distribution log revoked successfully.');
 
       // Sync with Firestore in background
-      await deleteDoc(doc(db, 'service_records', recordId));
-    } catch (err) {
-      setServiceRecords(prevSR);
-      saveState('mwo_service_records', prevSR);
       try {
-        handleFirestoreError(err, 'delete', 'service_records', recordId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        await deleteDoc(doc(db, 'service_records', recordId));
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setServiceRecords(prevSR);
+          saveState('mwo_service_records', prevSR);
+          try {
+            handleFirestoreError(err, 'delete', 'service_records', recordId);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'delete', 'service_records', recordId);
+        }
       }
+    } catch (err: any) {
+      console.warn("Service record remove error:", err);
     }
   };
 
@@ -694,26 +781,38 @@ export default function App() {
       triggerToast('success', `Distribution package quantity updated to ${newCount}.`);
 
       // Sync with Firestore in background
-      await updateDoc(doc(db, 'service_records', recordId), { packageCount: newCount });
-    } catch (err) {
-      setServiceRecords(prevSR);
-      saveState('mwo_service_records', prevSR);
       try {
-        handleFirestoreError(err, 'update', 'service_records', recordId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
+        await updateDoc(doc(db, 'service_records', recordId), { packageCount: newCount });
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+          setServiceRecords(prevSR);
+          saveState('mwo_service_records', prevSR);
+          try {
+            handleFirestoreError(err, 'update', 'service_records', recordId);
+          } catch (e: any) {
+            triggerToast('error', "Firestore error: " + e.message);
+          }
+        } else {
+          handleFirestoreError(err, 'update', 'service_records', recordId);
+        }
       }
+    } catch (err: any) {
+      console.warn("Service record package count update error:", err);
     }
   };
 
   const handleUpdateRemainingStock = async (programId: string, updatedRemaining: number) => {
     try {
       await updateDoc(doc(db, 'programs', programId), { remainingStock: updatedRemaining });
-    } catch (err) {
-      try {
+    } catch (err: any) {
+      if (err?.code === 'permission-denied' || err?.message?.includes('permission') || err?.message?.includes('Permission')) {
+        try {
+          handleFirestoreError(err, 'update', 'programs', programId);
+        } catch (e: any) {
+          triggerToast('error', "Firestore error: " + e.message);
+        }
+      } else {
         handleFirestoreError(err, 'update', 'programs', programId);
-      } catch (e: any) {
-        triggerToast('error', "Firestore error: " + e.message);
       }
     }
   };
@@ -951,7 +1050,7 @@ export default function App() {
               {/* Desktop Only Navigation elements */}
               <nav className="hidden lg:flex items-center gap-1.5 lg:gap-2">
                 <button
-                  onClick={() => { setActiveTab('dashboard'); setEditingBeneficiary(null); setEditingProgram(null); }}
+                  onClick={() => navigateToTab('dashboard')}
                   className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                     activeTab === 'dashboard' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                   }`}
@@ -959,11 +1058,25 @@ export default function App() {
                   Home Dashboard
                 </button>
 
+                {/* Direct Biometric Scanner tab in Menu */}
+                <button
+                  onClick={() => navigateToTab('biometrics')}
+                  className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition ${
+                    activeTab === 'biometrics' 
+                      ? 'bg-emerald-600 text-white shadow-sm' 
+                      : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                  }`}
+                  title="Open real-time biometric face scanner desk"
+                >
+                  <Scan className="w-3.5 h-3.5" />
+                  <span>Face Biometrics</span>
+                </button>
+
                 {/* Sub Directories available to Staff (Super/Field Admin) */}
                 {!isDonor && (
                   <>
                     <button
-                      onClick={() => { setActiveTab('beneficiaries'); setEditingBeneficiary(null); }}
+                      onClick={() => navigateToTab('beneficiaries')}
                       className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                         activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                       }`}
@@ -971,7 +1084,7 @@ export default function App() {
                       Beneficiaries Global Directory
                     </button>
                     <button
-                      onClick={() => { setActiveTab('programs'); setEditingProgram(null); }}
+                      onClick={() => navigateToTab('programs')}
                       className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                         activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                       }`}
@@ -985,7 +1098,7 @@ export default function App() {
                 {isDonor && (
                   <>
                     <button
-                      onClick={() => setActiveTab('beneficiaries')}
+                      onClick={() => navigateToTab('beneficiaries')}
                       className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                         activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                       }`}
@@ -993,7 +1106,7 @@ export default function App() {
                       Program Beneficiary view
                     </button>
                     <button
-                      onClick={() => setActiveTab('programs')}
+                      onClick={() => navigateToTab('programs')}
                       className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                         activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                       }`}
@@ -1007,7 +1120,7 @@ export default function App() {
                 {isSuperAdmin && (
                   <>
                     <button
-                      onClick={() => setActiveTab('users')}
+                      onClick={() => navigateToTab('users')}
                       className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                         activeTab === 'users' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
                       }`}
@@ -1018,7 +1131,7 @@ export default function App() {
                 )}
 
                 <button
-                  onClick={() => setActiveTab('profile')}
+                  onClick={() => navigateToTab('profile')}
                   className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
                     activeTab === 'profile' ? 'bg-emerald-50 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'
                   }`}
@@ -1069,7 +1182,7 @@ export default function App() {
                   </div>
 
                   <button
-                    onClick={() => { setActiveTab('dashboard'); setEditingBeneficiary(null); setEditingProgram(null); setIsMobileMenuOpen(false); }}
+                    onClick={() => { navigateToTab('dashboard'); setEditingBeneficiary(null); setEditingProgram(null); }}
                     className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                       activeTab === 'dashboard' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                     }`}
@@ -1077,11 +1190,24 @@ export default function App() {
                     <span>🏠</span> Home Dashboard
                   </button>
 
+                  {/* Face Biometrics Fast Access Button in Mobile Menu */}
+                  <button
+                    onClick={() => navigateToTab('biometrics')}
+                    className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
+                      activeTab === 'biometrics' 
+                        ? 'bg-emerald-600 text-white shadow-sm' 
+                        : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <Scan className="w-4 h-4 text-emerald-600" />
+                    <span>⚡ Face Biometrics Scanner</span>
+                  </button>
+
                   {/* Sub Directories available to Staff (Super/Field Admin) */}
                   {!isDonor && (
                     <>
                       <button
-                        onClick={() => { setActiveTab('beneficiaries'); setEditingBeneficiary(null); setIsMobileMenuOpen(false); }}
+                        onClick={() => { navigateToTab('beneficiaries'); setEditingBeneficiary(null); }}
                         className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                           activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                         }`}
@@ -1089,7 +1215,7 @@ export default function App() {
                         <span>👥</span> Beneficiaries Directory
                       </button>
                       <button
-                        onClick={() => { setActiveTab('programs'); setEditingProgram(null); setIsMobileMenuOpen(false); }}
+                        onClick={() => { navigateToTab('programs'); setEditingProgram(null); }}
                         className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                           activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                         }`}
@@ -1103,7 +1229,7 @@ export default function App() {
                   {isDonor && (
                     <>
                       <button
-                        onClick={() => { setActiveTab('beneficiaries'); setIsMobileMenuOpen(false); }}
+                        onClick={() => navigateToTab('beneficiaries')}
                         className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                           activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                         }`}
@@ -1111,7 +1237,7 @@ export default function App() {
                         <span>👥</span> Program Beneficiary View
                       </button>
                       <button
-                        onClick={() => { setActiveTab('programs'); setIsMobileMenuOpen(false); }}
+                        onClick={() => navigateToTab('programs')}
                         className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                           activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                         }`}
@@ -1125,7 +1251,7 @@ export default function App() {
                   {isSuperAdmin && (
                     <>
                       <button
-                        onClick={() => { setActiveTab('users'); setIsMobileMenuOpen(false); }}
+                        onClick={() => navigateToTab('users')}
                         className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                           activeTab === 'users' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
                         }`}
@@ -1136,7 +1262,7 @@ export default function App() {
                   )}
 
                   <button
-                    onClick={() => { setActiveTab('profile'); setIsMobileMenuOpen(false); }}
+                    onClick={() => navigateToTab('profile')}
                     className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
                       activeTab === 'profile' ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-50'
                     }`}
@@ -1270,16 +1396,23 @@ service cloud.firestore {
                     Welcome back, <strong className="font-bold">{currentUser.name}</strong>. Monitor distribution metrics, enroll local citizens, or initiate face recognition verification desks.
                   </p>
 
-                  <div className="flex gap-2.5 mt-5">
+                  <div className="flex flex-wrap gap-2.5 mt-5">
                     <button
-                      onClick={() => { setEditingBeneficiary(null); setActiveTab('register_beneficiary'); }}
+                      onClick={() => navigateToTab('biometrics')}
+                      className="bg-emerald-950/40 hover:bg-emerald-950/60 text-white border border-white/30 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer shadow-sm hover:scale-105"
+                    >
+                      <Scan className="w-4 h-4 text-emerald-300" />
+                      <span>Scan Face Biometrics</span>
+                    </button>
+                    <button
+                      onClick={() => { setEditingBeneficiary(null); navigateToTab('register_beneficiary'); }}
                       className="bg-white text-emerald-950 font-bold px-4 py-2 rounded-xl text-xs shadow-sm hover:scale-105 transition cursor-pointer"
                     >
                       Enlist Beneficiary Profile
                     </button>
                     {isSuperAdmin && (
                       <button
-                        onClick={() => { setEditingProgram(null); setActiveTab('create_program'); }}
+                        onClick={() => { setEditingProgram(null); navigateToTab('create_program'); }}
                         className="bg-emerald-950/30 text-white border border-white/20 font-bold px-4 py-2 rounded-xl text-xs hover:bg-emerald-950/40 transition cursor-pointer"
                       >
                         Launch Distribution Program
@@ -1289,7 +1422,25 @@ service cloud.firestore {
                 </div>
 
                 {/* Overall statistics trackers cards layout */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm leading-none flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="bg-emerald-50 text-emerald-600 p-3 rounded-xl">
+                        <Scan className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="block text-[9.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">Face Recognition</span>
+                        <span className="text-xs font-bold text-slate-800">128D AI Biometrics</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => navigateToTab('biometrics')}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <span>Scan</span> &rarr;
+                    </button>
+                  </div>
+
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm leading-none flex items-center gap-4">
                     <div className="bg-sky-50 text-sky-600 p-3.5 rounded-xl">
                       <Users2 className="w-6 h-6" />
@@ -1473,12 +1624,32 @@ service cloud.firestore {
               </div>
             )}
 
+            {/* ====== 1.5 REAL-TIME BIOMETRIC FACE VERIFICATION DESK ====== */}
+            {activeTab === 'biometrics' && (
+              <BiometricVerificationDesk
+                beneficiaries={beneficiaries}
+                programs={enrichedPrograms}
+                serviceRecords={serviceRecords}
+                onBack={() => navigateToTab(previousTab || 'dashboard')}
+                onSelectBeneficiaryForProgram={() => {
+                  navigateToTab('programs');
+                }}
+                onViewBeneficiaryProfile={() => {
+                  navigateToTab('beneficiaries');
+                }}
+                onRegisterNew={() => {
+                  setEditingBeneficiary(null);
+                  navigateToTab('register_beneficiary');
+                }}
+              />
+            )}
+
             {/* ====== 2. REGISTRATION OF A BENEFICIARY (FORM VIEW) ====== */}
             {activeTab === 'register_beneficiary' && (
               <BeneficiaryRegister
                 currentUser={currentUser}
                 onSave={handleSaveBeneficiary}
-                onCancel={() => setActiveTab('dashboard')}
+                onCancel={() => navigateToTab('dashboard')}
                 editingBeneficiary={editingBeneficiary}
               />
             )}
