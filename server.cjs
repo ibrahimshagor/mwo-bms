@@ -54,7 +54,17 @@ async function startServer() {
     res.setHeader("Content-Type", "image/svg+xml");
     res.sendFile(import_path.default.join(process.cwd(), "mwo-favicon.svg"));
   });
-  app.use("/models", import_express.default.static(import_path.default.join(process.cwd(), "node_modules/@vladmandic/face-api/model")));
+  const modelsStaticOptions = {
+    maxAge: "7d",
+    setHeaders: (res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    }
+  };
+  const modelsDir = import_path.default.join(process.cwd(), "public", "models");
+  app.use("/models", import_express.default.static(modelsDir, modelsStaticOptions));
+  app.use("/mwobms/models", import_express.default.static(modelsDir, modelsStaticOptions));
   app.post("/api/face-match", async (req, res) => {
     try {
       if (!apiKey) {
