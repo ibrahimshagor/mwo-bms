@@ -21,13 +21,22 @@ export interface MatchResult {
 let modelsPromise: Promise<boolean> | null = null;
 let modelsLoaded = false;
 
+// In-memory cache for precomputed 128D facial descriptors to eliminate duplicate processing
+const descriptorCache = new Map<string, {
+  descriptor: Float32Array;
+  landmarks: faceapi.FaceLandmarks68;
+  box: faceapi.Box;
+  score: number;
+}>();
+
 /**
  * Load Face-API neural network models from local static assets or fallback CDNs
  */
 export async function loadFaceApiModels(
   onProgress?: (percent: number, status: string) => void
 ): Promise<boolean> {
-  if (modelsLoaded) {
+  if (areModelsLoaded()) {
+    modelsLoaded = true;
     onProgress?.(100, 'Biometric models ready');
     return true;
   }
@@ -38,50 +47,77 @@ export async function loadFaceApiModels(
 
   modelsPromise = (async () => {
     const basePath = getBasePath();
-    const sources = [
-      { name: 'Local Neural Weights', url: `${basePath}/models/`, timeout: 4000 },
-      { name: 'Cloud CDN (JSDelivr)', url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/', timeout: 7000 },
-      { name: 'Cloud CDN (Unpkg)', url: 'https://unpkg.com/@vladmandic/face-api/model/', timeout: 9000 },
-    ];
+    const cleanBase = basePath ? basePath.replace(/\/+$/, '') : '';
+    
+    // Multiple reliable source candidates:
+    // 1. App basePath /models (for custom base paths or /mwobms)
+    // 2. Local root /models (standard public directory)
+    // 3. Local relative ./models (handles nested or relative deployments)
+    // 4. Cloud CDN (JSDelivr pinned to exact matching version 1.7.15)
+    // 5. Cloud CDN (Unpkg pinned to exact matching version 1.7.15)
+    const sources: Array<{ name: string; url: string; timeout: number }> = [];
+
+    if (cleanBase) {
+      sources.push({ name: `Local Neural Weights (${cleanBase})`, url: `${cleanBase}/models`, timeout: 15000 });
+    }
+    sources.push({ name: 'Local Neural Weights (/models)', url: '/models', timeout: 15000 });
+    sources.push({ name: 'Local Relative Weights (./models)', url: './models', timeout: 15000 });
+    sources.push({
+      name: 'Cloud CDN (JSDelivr @1.7.15)',
+      url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model',
+      timeout: 25000
+    });
+    sources.push({
+      name: 'Cloud CDN (Unpkg @1.7.15)',
+      url: 'https://unpkg.com/@vladmandic/face-api@1.7.15/model',
+      timeout: 25000
+    });
+
+    // Ensure TensorFlow.js backend is primed
+    try {
+      const tfAny = (faceapi as any).tf;
+      if (tfAny && typeof tfAny.ready === 'function') {
+        await tfAny.ready();
+      }
+    } catch (e) {
+      // Non-fatal, continue with network loading
+    }
 
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
       try {
-        onProgress?.(20 + i * 25, `Connecting to ${source.name}...`);
+        onProgress?.(15 + i * 15, `Initializing Biometrics (${source.name})...`);
         
-        const loadWithTimeout = async () => {
-          // Load fast detector for real-time tracking
-          await faceapi.nets.tinyFaceDetector.loadFromUri(source.url);
-          onProgress?.(40, 'Loaded Face Detection CNN');
-
-          // Load 68-point landmark detector (standard)
-          await faceapi.nets.faceLandmark68Net.loadFromUri(source.url);
-          onProgress?.(60, 'Loaded 68-Point Landmark Net');
-
-          // Also load tiny landmark detector if available to prevent any missing model errors
-          try {
-            await faceapi.nets.faceLandmark68TinyNet.loadFromUri(source.url);
-          } catch (e) {
-            // Optional fallback
+        const loadNets = async () => {
+          // 1. Tiny Face Detector (189KB) - detect bounding box
+          if (!faceapi.nets.tinyFaceDetector.isLoaded) {
+            onProgress?.(30, `Loading Face Detector (${source.name})...`);
+            await faceapi.nets.tinyFaceDetector.loadFromUri(source.url);
           }
 
-          // Load 128D deep vector recognition network
-          await faceapi.nets.faceRecognitionNet.loadFromUri(source.url);
-          onProgress?.(85, 'Loaded 128D Vector Net');
+          // 2. Face Landmarks 68 (349KB) - geometric alignments
+          if (!faceapi.nets.faceLandmark68Net.isLoaded) {
+            onProgress?.(60, `Loading Facial Landmarks (${source.name})...`);
+            await faceapi.nets.faceLandmark68Net.loadFromUri(source.url);
+          }
 
-          // Try loading SSD MobileNet for high precision (optional)
-          try {
-            await faceapi.nets.ssdMobilenetv1.loadFromUri(source.url);
-          } catch (e) {
-            console.warn('SSD MobileNet skipped, using TinyFaceDetector for precision:', e);
+          // 3. 128D Face Recognition Network (6.2MB) - biometric vector generation
+          if (!faceapi.nets.faceRecognitionNet.isLoaded) {
+            onProgress?.(85, `Loading 128D Recognition Network (${source.name})...`);
+            await faceapi.nets.faceRecognitionNet.loadFromUri(source.url);
+          }
+
+          // 4. Optional tiny landmarks loaded non-blockingly
+          if (!faceapi.nets.faceLandmark68TinyNet.isLoaded) {
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(source.url).catch(() => {});
           }
         };
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`${source.name} load timed out`)), source.timeout)
+          setTimeout(() => reject(new Error(`${source.name} load timed out after ${source.timeout}ms`)), source.timeout)
         );
 
-        await Promise.race([loadWithTimeout(), timeoutPromise]);
+        await Promise.race([loadNets(), timeoutPromise]);
 
         modelsLoaded = true;
         onProgress?.(100, 'Neural networks ready');
@@ -92,7 +128,9 @@ export async function loadFaceApiModels(
       }
     }
 
-    // If all failed, return false
+    // Reset modelsPromise on failure so future attempts can retry cleanly
+    modelsPromise = null;
+    modelsLoaded = false;
     console.error('[Biometrics] All neural weight sources failed to load.');
     return false;
   })();
@@ -104,7 +142,12 @@ export async function loadFaceApiModels(
  * Check if models are currently loaded
  */
 export function areModelsLoaded(): boolean {
-  return modelsLoaded;
+  return (
+    modelsLoaded ||
+    (Boolean(faceapi.nets.tinyFaceDetector?.isLoaded) &&
+     Boolean(faceapi.nets.faceLandmark68Net?.isLoaded) &&
+     Boolean(faceapi.nets.faceRecognitionNet?.isLoaded))
+  );
 }
 
 /**
@@ -121,6 +164,15 @@ export async function extractFaceDescriptor(
   if (!modelsLoaded) {
     const loaded = await loadFaceApiModels();
     if (!loaded) return null;
+  }
+
+  // Check in-memory cache for string/data URL inputs to instantly return cached 128D vector
+  const cacheKey = typeof input === 'string'
+    ? (input.length > 180 ? input.slice(0, 90) + input.slice(-90) : input)
+    : null;
+
+  if (cacheKey && descriptorCache.has(cacheKey)) {
+    return descriptorCache.get(cacheKey)!;
   }
 
   let element: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
@@ -145,34 +197,38 @@ export async function extractFaceDescriptor(
   }
 
   try {
-    // 1. Try high-accuracy SSD MobileNet if available
+    // Fast & accurate TinyFaceDetector with FaceLandmarks and 128D descriptor
     let result = null;
-    try {
-      if (faceapi.nets.ssdMobilenetv1.isLoaded) {
-        result = await faceapi
-          .detectSingleFace(element, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-      }
-    } catch (e) {
-      // Fallback
-    }
-
-    // 2. Fallback to TinyFaceDetector with fine score threshold
-    if (!result && faceapi.nets.tinyFaceDetector.isLoaded) {
+    if (faceapi.nets.tinyFaceDetector.isLoaded) {
       result = await faceapi
         .detectSingleFace(element, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.25 }))
-        .withFaceLandmarks()
+        .withFaceLandmarks(false)
         .withFaceDescriptor();
     }
 
+    // High accuracy fallback if available
+    if (!result && faceapi.nets.ssdMobilenetv1.isLoaded) {
+      try {
+        result = await faceapi
+          .detectSingleFace(element, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+          .withFaceLandmarks(false)
+          .withFaceDescriptor();
+      } catch (e) {}
+    }
+
     if (result && result.descriptor) {
-      return {
+      const output = {
         descriptor: result.descriptor,
         landmarks: result.landmarks,
         box: result.detection.box,
         score: result.detection.score,
       };
+
+      if (cacheKey) {
+        descriptorCache.set(cacheKey, output);
+      }
+
+      return output;
     }
   } catch (err) {
     console.error('[Biometrics] Face extraction error:', err);

@@ -110,6 +110,20 @@ export default function FaceScanner({
     };
   }, []);
 
+  const retryInitModels = async () => {
+    setModelsLoading(true);
+    setModelsProgress(10);
+    setModelsStatusText('Connecting to biometric neural weight sources...');
+    const success = await loadFaceApiModels((percent, text) => {
+      setModelsProgress(percent);
+      setModelsStatusText(text);
+    });
+    setModelsLoading(false);
+    if (!success) {
+      setModelsStatusText('Neural engine failed to initialize. Please check network connectivity.');
+    }
+  };
+
   // 2. Precompute 128D Face Descriptors for all registered beneficiaries with photos
   useEffect(() => {
     let active = true;
@@ -120,7 +134,12 @@ export default function FaceScanner({
       setIndexingStatus('Compiling biometric indices from beneficiary database...');
       const profiles: BiometricProfile[] = [];
 
-      for (const b of beneficiaries) {
+      // Sort so targetBeneficiary is indexed first for instantaneous match response
+      const sortedBeneficiaries = targetBeneficiary
+        ? [targetBeneficiary, ...beneficiaries.filter((b) => b.id !== targetBeneficiary.id)]
+        : beneficiaries;
+
+      for (const b of sortedBeneficiaries) {
         if (!active) break;
         if (b.photo && b.photo.trim().length > 0 && b.photo !== 'MOCK_SELFIE_PIC') {
           try {
@@ -228,9 +247,8 @@ export default function FaceScanner({
   }, []);
 
   useEffect(() => {
-    if (!modelsLoading) {
-      startCamera(facingMode);
-    }
+    // Start camera stream immediately on mount so the user sees their camera in ~200-400ms
+    startCamera(facingMode);
 
     return () => {
       if (streamRef.current) {
@@ -238,7 +256,7 @@ export default function FaceScanner({
         streamRef.current = null;
       }
     };
-  }, [modelsLoading, facingMode, startCamera]);
+  }, [facingMode, startCamera]);
 
   // 4. Continuous Real-Time Video Face Detection & Live Matching Loop
   useEffect(() => {
@@ -490,6 +508,50 @@ export default function FaceScanner({
     try {
       const extracted = await extractFaceDescriptor(photoDataUrl);
       if (!extracted) {
+        // Fallback: Attempt server-side Gemini Biometric Match if local models are unavailable or missed face
+        try {
+          const candidatesWithPhotos = (targetBeneficiary ? [targetBeneficiary] : beneficiaries)
+            .filter((b) => b.photo && b.photo.length > 50 && b.photo !== 'MOCK_SELFIE_PIC')
+            .map((b) => ({ id: b.id, name: b.name, photo: b.photo }));
+
+          if (candidatesWithPhotos.length > 0) {
+            const resp = await fetch('/api/face-match', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                capturedPhoto: photoDataUrl,
+                candidates: candidatesWithPhotos,
+              }),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data && typeof data.match === 'boolean') {
+                const matchedCandidate = data.matchedId ? beneficiaries.find((b) => b.id === data.matchedId) : null;
+                const result: MatchResult = {
+                  distance: data.match ? (1 - (data.confidence || 85) / 100) : 1.0,
+                  confidence: data.confidence || (data.match ? 85 : 0),
+                  isMatch: Boolean(data.match && matchedCandidate),
+                  status: data.match && matchedCandidate ? 'matched' : 'no_match',
+                  explanation: data.reasoning || (data.match ? 'Biometrically verified via Multimodal AI.' : 'No matching facial profile found.'),
+                };
+                setDeepScanResult(result);
+                if (result.isMatch && matchedCandidate) {
+                  setLiveMatchResult({
+                    beneficiary: matchedCandidate,
+                    confidence: result.confidence,
+                    distance: result.distance,
+                    isMatch: true,
+                  });
+                }
+                setIsDeepScanning(false);
+                return;
+              }
+            }
+          }
+        } catch (serverErr) {
+          console.warn('Server face-match fallback warning:', serverErr);
+        }
+
         setDeepScanResult({
           distance: 1.0,
           confidence: 0,
@@ -686,26 +748,46 @@ export default function FaceScanner({
           </div>
         )}
 
-        {/* Neural Models Loading Banner */}
+        {/* Neural Models Loading Non-blocking Indicator */}
         {modelsLoading && (
-          <div className="bg-slate-850 p-6 flex flex-col items-center justify-center text-center gap-3">
-            <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
-            <div>
-              <h4 className="text-sm font-bold text-white mb-1">{modelsStatusText}</h4>
-              <p className="text-xs text-slate-400">Loading lightweight CNN weights for instantaneous in-browser recognition</p>
+          <div className="bg-slate-850/95 border-b border-emerald-900/40 px-3.5 py-1.5 flex items-center justify-between gap-3 text-xs shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
+              <span className="font-semibold text-white truncate text-[11px]">{modelsStatusText || 'Initializing Biometric Neural Nets...'}</span>
             </div>
-            <div className="w-64 bg-slate-700 rounded-full h-2 overflow-hidden mt-1">
-              <div
-                className="bg-emerald-500 h-full transition-all duration-300 rounded-full"
-                style={{ width: `${modelsProgress}%` }}
-              />
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="w-20 bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-emerald-500 h-full transition-all duration-200 rounded-full"
+                  style={{ width: `${modelsProgress}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono font-bold text-emerald-400">{modelsProgress}%</span>
             </div>
           </div>
         )}
 
-        {/* Main Scanner Body */}
-        {!modelsLoading && (
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-0 overflow-y-auto flex-1">
+        {/* Neural Models Failure Notice with Direct Retry Action */}
+        {!modelsLoading && !areModelsLoaded() && (
+          <div className="bg-amber-950/80 border-b border-amber-800/60 px-3.5 py-2 flex items-center justify-between gap-3 text-xs shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="font-semibold text-amber-200 truncate text-[11px]">
+                {modelsStatusText || 'Neural weights could not be loaded. Camera is active, but offline biometrics requires neural weights.'}
+              </span>
+            </div>
+            <button
+              onClick={retryInitModels}
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-[11px] font-bold flex items-center gap-1.5 transition shrink-0 cursor-pointer shadow-sm"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry Loading</span>
+            </button>
+          </div>
+        )}
+
+        {/* Main Scanner Body - Mounts immediately so camera starts instantly */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-0 overflow-y-auto flex-1">
             
             {/* Left: Camera & Canvas Viewport (7 cols on md) */}
             <div className="md:col-span-7 bg-black flex flex-col items-center justify-center relative min-h-[300px] sm:min-h-[360px] border-b md:border-b-0 md:border-r border-slate-800">
@@ -831,6 +913,8 @@ export default function FaceScanner({
                       }`} />
                       {liveMatchResult?.isMatch
                         ? `MATCH: ${liveMatchResult.confidence}%`
+                        : modelsLoading
+                        ? 'WARMING UP AI...'
                         : faceDetected
                         ? 'TRACKING FACE...'
                         : 'ALIGN FACE IN FRAME'}
@@ -1166,7 +1250,6 @@ export default function FaceScanner({
             </div>
 
           </div>
-        )}
 
       </div>
     </div>

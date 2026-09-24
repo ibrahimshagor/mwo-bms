@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './utils/googleAuth';
 import { compressDataUrl } from './utils/imageCompressor';
+import { loadFaceApiModels } from './utils/faceBiometrics';
 
 // Custom Firestore permission-denied error handler complying with firebase-integration guidelines
 function handleFirestoreError(
@@ -50,18 +51,16 @@ function handleFirestoreError(
 
 // Helper to resolve the correct subpath for cPanel and local hosting environments
 export const getBasePath = () => {
-  const path = window.location.pathname;
+  if (typeof window === 'undefined') return '';
+  const path = window.location.pathname || '';
   if (path.includes('/mwobms')) {
     return '/mwobms';
   }
-  let base = path;
-  if (base.endsWith('.html') || base.endsWith('.php')) {
-    base = base.substring(0, base.lastIndexOf('/'));
+  if (path.endsWith('.html') || path.endsWith('.php')) {
+    const lastSlash = path.lastIndexOf('/');
+    return lastSlash > 0 ? path.substring(0, lastSlash) : '';
   }
-  if (base.endsWith('/')) {
-    base = base.slice(0, -1);
-  }
-  return base;
+  return '';
 };
 
 // Import Modular Components
@@ -148,6 +147,16 @@ export default function App() {
       window.removeEventListener('popstate', checkBypassParam);
       window.removeEventListener('hashchange', checkBypassParam);
     };
+  }, []);
+
+  // Preload biometric AI neural models in the background during idle time
+  useEffect(() => {
+    const preloadTimer = setTimeout(() => {
+      loadFaceApiModels().catch((err) => {
+        console.warn('[Biometrics] Background model preload note:', err);
+      });
+    }, 800);
+    return () => clearTimeout(preloadTimer);
   }, []);
 
   // Non-blocking Toast notification state

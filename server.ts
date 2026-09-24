@@ -41,8 +41,18 @@ async function startServer() {
     res.sendFile(path.join(process.cwd(), "mwo-favicon.svg"));
   });
 
-  // Serve face-api.js neural network weights locally from node_modules
-  app.use("/models", express.static(path.join(process.cwd(), "node_modules/@vladmandic/face-api/model")));
+  // Serve face-api.js neural network weights locally from public/models with cross-origin & caching headers
+  const modelsStaticOptions = {
+    maxAge: "7d",
+    setHeaders: (res: express.Response) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    },
+  };
+  const modelsDir = path.join(process.cwd(), "public", "models");
+  app.use("/models", express.static(modelsDir, modelsStaticOptions));
+  app.use("/mwobms/models", express.static(modelsDir, modelsStaticOptions));
 
   // Real facial biometric matching endpoint
   app.post("/api/face-match", async (req, res) => {
