@@ -63,14 +63,109 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDuration: '2 Weeks',
     targetStockSize: 500,
     remainingStock: 497,
+    warehouses: ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
     inventoryItems: [
-      { id: 'ITEM-101', programId: 'MWO-PRG-1001', name: 'ব্লাঙ্কেট (Heavy Blanket)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 600, allocatedToPackages: 500, notes: 'তুর্কি ফ্লিস ডাবল লেয়ার' },
-      { id: 'ITEM-102', programId: 'MWO-PRG-1001', name: 'উইন্টার জ্যাকেট (Jacket)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 550, allocatedToPackages: 500, notes: 'ওয়াটারপ্রুফ প্যাডেড' },
-      { id: 'ITEM-103', programId: 'MWO-PRG-1001', name: 'উলের সোয়েটার (Woolen Sweater)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 520, allocatedToPackages: 500 },
-      { id: 'ITEM-104', programId: 'MWO-PRG-1001', name: 'উষ্ণ কাশ্মীরি শাল (Warm Shawl)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 500, allocatedToPackages: 500 },
-      { id: 'ITEM-105', programId: 'MWO-PRG-1001', name: 'উলের গ্লাভস (Winter Gloves)', category: 'শীতবস্ত্র', unit: 'জোড়া (Pair)', totalReceived: 550, allocatedToPackages: 500 },
-      { id: 'ITEM-106', programId: 'MWO-PRG-1001', name: 'মাফলার (Woolen Muffler)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 500, allocatedToPackages: 500 },
-      { id: 'ITEM-107', programId: 'MWO-PRG-1001', name: 'বেবি উইন্টার স্যুট (Baby Winter Set)', category: 'শিশুপণ্য', unit: 'সেট (Set)', totalReceived: 200, allocatedToPackages: 0, notes: 'অতিরিক্ত রিজার্ভ স্টক' }
+      { 
+        id: 'ITEM-101', 
+        programId: 'MWO-PRG-1001', 
+        name: 'ব্লাঙ্কেট (Heavy Blanket)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 600, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 300, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 200, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        },
+        notes: 'তুর্কি ফ্লিস ডাবল লেয়ার' 
+      },
+      { 
+        id: 'ITEM-102', 
+        programId: 'MWO-PRG-1001', 
+        name: 'উইন্টার জ্যাকেট (Jacket)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 550, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 275, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 175, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        },
+        notes: 'ওয়াটারপ্রুফ প্যাডেড' 
+      },
+      { 
+        id: 'ITEM-103', 
+        programId: 'MWO-PRG-1001', 
+        name: 'উলের সোয়েটার (Woolen Sweater)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 520, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 260, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 160, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        }
+      },
+      { 
+        id: 'ITEM-104', 
+        programId: 'MWO-PRG-1001', 
+        name: 'উষ্ণ কাশ্মীরি শাল (Warm Shawl)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 500, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 250, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 150, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        }
+      },
+      { 
+        id: 'ITEM-105', 
+        programId: 'MWO-PRG-1001', 
+        name: 'উলের গ্লাভস (Winter Gloves)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'জোড়া (Pair)', 
+        totalReceived: 550, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 275, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 175, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        }
+      },
+      { 
+        id: 'ITEM-106', 
+        programId: 'MWO-PRG-1001', 
+        name: 'মাফলার (Woolen Muffler)', 
+        category: 'শীতবস্ত্র', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 500, 
+        allocatedToPackages: 500, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 250, allocatedToPackages: 250 },
+          'কক্সবাজার': { totalReceived: 150, allocatedToPackages: 150 },
+          'খুলনা': { totalReceived: 100, allocatedToPackages: 100 }
+        }
+      },
+      { 
+        id: 'ITEM-107', 
+        programId: 'MWO-PRG-1001', 
+        name: 'বেবি উইন্টার স্যুট (Baby Winter Set)', 
+        category: 'শিশুপণ্য', 
+        unit: 'সেট (Set)', 
+        totalReceived: 200, 
+        allocatedToPackages: 0, 
+        warehouseStocks: {
+          'ময়মনসিংহ': { totalReceived: 100, allocatedToPackages: 0 },
+          'কক্সবাজার': { totalReceived: 60, allocatedToPackages: 0 },
+          'খুলনা': { totalReceived: 40, allocatedToPackages: 0 }
+        },
+        notes: 'অতিরিক্ত রিজার্ভ স্টক' 
+      }
     ],
     inventoryPackages: [
       {
@@ -86,7 +181,12 @@ export const DEFAULT_PROGRAMS: Program[] = [
           { itemId: 'ITEM-105', itemName: 'উলের গ্লাভস (Winter Gloves)', quantityPerPackage: 1, unit: 'জোড়া (Pair)' },
           { itemId: 'ITEM-106', itemName: 'মাফলার (Woolen Muffler)', quantityPerPackage: 1, unit: 'পিস (Pcs)' }
         ],
-        assembledQuantity: 500
+        assembledQuantity: 500,
+        warehouseAssembled: {
+          'ময়মনসিংহ': 250,
+          'কক্সবাজার': 150,
+          'খুলনা': 100
+        }
       }
     ]
   },
@@ -100,11 +200,60 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDuration: '3 Months',
     targetStockSize: 1200,
     remainingStock: 1200,
+    warehouses: ['কক্সবাজার ক্যাম্প-১', 'কক্সবাজার ক্যাম্প-৪'],
     inventoryItems: [
-      { id: 'ITEM-201', programId: 'MWO-PRG-1002', name: 'অ্যান্টিসেপটিক সাবান (Soap)', category: 'হাইজিন', unit: 'পিস (Pcs)', totalReceived: 4800, allocatedToPackages: 4800 },
-      { id: 'ITEM-202', programId: 'MWO-PRG-1002', name: 'ডিটারজেন্ট পাউডার (Detergent 1kg)', category: 'হাইজিন', unit: 'প্যাকেট (Pkt)', totalReceived: 1500, allocatedToPackages: 1200 },
-      { id: 'ITEM-203', programId: 'MWO-PRG-1002', name: 'ওয়াটার পিউরিফায়ার ট্যাবলেট (Aqua Tabs)', category: 'স্যানিটেশন', unit: 'স্ট্রিপ (Strip)', totalReceived: 3600, allocatedToPackages: 2400 },
-      { id: 'ITEM-204', programId: 'MWO-PRG-1002', name: 'স্যানিটারি ন্যাপকিন (Pads)', category: 'হাইজিন', unit: 'প্যাক (Pack)', totalReceived: 2400, allocatedToPackages: 2400 }
+      { 
+        id: 'ITEM-201', 
+        programId: 'MWO-PRG-1002', 
+        name: 'অ্যান্টিসেপটিক সাবান (Soap)', 
+        category: 'হাইজিন', 
+        unit: 'পিস (Pcs)', 
+        totalReceived: 4800, 
+        allocatedToPackages: 4800,
+        warehouseStocks: {
+          'কক্সবাজার ক্যাম্প-১': { totalReceived: 2800, allocatedToPackages: 2800 },
+          'কক্সবাজার ক্যাম্প-৪': { totalReceived: 2000, allocatedToPackages: 2000 }
+        }
+      },
+      { 
+        id: 'ITEM-202', 
+        programId: 'MWO-PRG-1002', 
+        name: 'ডিটারজেন্ট পাউডার (Detergent 1kg)', 
+        category: 'হাইজিন', 
+        unit: 'প্যাকেট (Pkt)', 
+        totalReceived: 1500, 
+        allocatedToPackages: 1200,
+        warehouseStocks: {
+          'কক্সবাজার ক্যাম্প-১': { totalReceived: 900, allocatedToPackages: 700 },
+          'কক্সবাজার ক্যাম্প-৪': { totalReceived: 600, allocatedToPackages: 500 }
+        }
+      },
+      { 
+        id: 'ITEM-203', 
+        programId: 'MWO-PRG-1002', 
+        name: 'ওয়াটার পিউরিফায়ার ট্যাবলেট (Aqua Tabs)', 
+        category: 'স্যানিটেশন', 
+        unit: 'স্ট্রিপ (Strip)', 
+        totalReceived: 3600, 
+        allocatedToPackages: 2400,
+        warehouseStocks: {
+          'কক্সবাজার ক্যাম্প-১': { totalReceived: 2000, allocatedToPackages: 1400 },
+          'কক্সবাজার ক্যাম্প-৪': { totalReceived: 1600, allocatedToPackages: 1000 }
+        }
+      },
+      { 
+        id: 'ITEM-204', 
+        programId: 'MWO-PRG-1002', 
+        name: 'স্যানিটারি ন্যাপকিন (Pads)', 
+        category: 'হাইজিন', 
+        unit: 'প্যাক (Pack)', 
+        totalReceived: 2400, 
+        allocatedToPackages: 2400,
+        warehouseStocks: {
+          'কক্সবাজার ক্যাম্প-১': { totalReceived: 1400, allocatedToPackages: 1400 },
+          'কক্সবাজার ক্যাম্প-৪': { totalReceived: 1000, allocatedToPackages: 1000 }
+        }
+      }
     ],
     inventoryPackages: [
       {
@@ -118,7 +267,11 @@ export const DEFAULT_PROGRAMS: Program[] = [
           { itemId: 'ITEM-203', itemName: 'ওয়াটার পিউরিফায়ার ট্যাবলেট (Aqua Tabs)', quantityPerPackage: 2, unit: 'স্ট্রিপ (Strip)' },
           { itemId: 'ITEM-204', itemName: 'স্যানিটারি ন্যাপকিন (Pads)', quantityPerPackage: 2, unit: 'প্যাক (Pack)' }
         ],
-        assembledQuantity: 1200
+        assembledQuantity: 1200,
+        warehouseAssembled: {
+          'কক্সবাজার ক্যাম্প-১': 700,
+          'কক্সবাজার ক্যাম্প-৪': 500
+        }
       }
     ]
   },
@@ -132,8 +285,22 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDuration: '1 Day',
     targetStockSize: 300,
     remainingStock: 298,
+    warehouses: ['মিরপুর গুদাম', 'মোহাম্মদপুর গুদাম'],
     inventoryItems: [
-      { id: 'ITEM-301', programId: 'MWO-PRG-1003', name: 'মিনিকেট চাল (Miniket Rice)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 3500, allocatedToPackages: 3000, notes: '৫০ কেজি বস্তা মোট ৭০টি' },
+      { 
+        id: 'ITEM-301', 
+        programId: 'MWO-PRG-1003', 
+        name: 'মিনিকেট চাল (Miniket Rice)', 
+        category: 'খাদ্যপণ্য', 
+        unit: 'কেজি (Kg)', 
+        totalReceived: 3500, 
+        allocatedToPackages: 3000, 
+        warehouseStocks: {
+          'মিরপুর গুদাম': { totalReceived: 2000, allocatedToPackages: 1800 },
+          'মোহাম্মদপুর গুদাম': { totalReceived: 1500, allocatedToPackages: 1200 }
+        },
+        notes: '৫০ কেজি বস্তা মোট ৭০টি' 
+      },
       { id: 'ITEM-302', programId: 'MWO-PRG-1003', name: 'গম/আটা (Flour/Atta)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 1800, allocatedToPackages: 1500 },
       { id: 'ITEM-303', programId: 'MWO-PRG-1003', name: 'ফর্টিফাইড সয়াবিন তেল (Soybean Oil)', category: 'খাদ্যপণ্য', unit: 'লিটার (Liter)', totalReceived: 700, allocatedToPackages: 600 },
       { id: 'ITEM-304', programId: 'MWO-PRG-1003', name: 'সাদা চিনি (Refined Sugar)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 700, allocatedToPackages: 600 },

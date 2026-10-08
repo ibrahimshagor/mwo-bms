@@ -5,7 +5,8 @@ import {
   Boxes, PackagePlus, Plus, Minus, Layers, CheckCircle, AlertTriangle, 
   Trash2, Edit3, ArrowRight, ArrowLeft, RefreshCw, ShoppingBag, 
   Sparkles, Check, X, ShieldAlert, FileSpreadsheet, Eye, Info,
-  Search, Filter, ClipboardList, Download, ArrowUpRight, SlidersHorizontal
+  Search, Filter, ClipboardList, Download, ArrowUpRight, SlidersHorizontal,
+  MapPin, Building2
 } from 'lucide-react';
 
 interface InventoryDeskProps {
@@ -17,7 +18,8 @@ interface InventoryDeskProps {
   onUpdateProgramInventory: (
     programId: string, 
     inventoryItems: InventoryItem[], 
-    inventoryPackages: InventoryPackage[]
+    inventoryPackages: InventoryPackage[],
+    warehouses?: string[]
   ) => void;
   onNavigateToProgramDirectory?: (programId?: string) => void;
 }
@@ -118,6 +120,10 @@ export default function InventoryDesk({
 
   // Modal / Form States
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
+  const [addItemMode, setAddItemMode] = useState<'new' | 'catalog'>('new');
+  const [selectedCatalogItemId, setSelectedCatalogItemId] = useState<string>('');
+  const [addItemWarehouse, setAddItemWarehouse] = useState<string>('');
+
   const [isStockInModalOpen, setIsStockInModalOpen] = useState(false);
   const [selectedItemForStockIn, setSelectedItemForStockIn] = useState<InventoryItem | null>(null);
   const [stockInQuantity, setStockInQuantity] = useState<number>(100);
@@ -125,6 +131,7 @@ export default function InventoryDesk({
   // Custom Stock Add/Deduct Modal States
   const [isCustomStockModalOpen, setIsCustomStockModalOpen] = useState(false);
   const [selectedItemForAdjustment, setSelectedItemForAdjustment] = useState<InventoryItem | null>(null);
+  const [adjustmentWarehouse, setAdjustmentWarehouse] = useState<string>('');
   const [adjustmentType, setAdjustmentType] = useState<'add' | 'deduct'>('add');
   const [adjustmentQuantity, setAdjustmentQuantity] = useState<number>(500);
   const [adjustmentNote, setAdjustmentNote] = useState<string>('');
@@ -135,6 +142,7 @@ export default function InventoryDesk({
   const [editItemName, setEditItemName] = useState('');
   const [editItemCategory, setEditItemCategory] = useState('শীতবস্ত্র');
   const [editItemUnit, setEditItemUnit] = useState('পিস (Pcs)');
+  const [editItemWarehouseStocks, setEditItemWarehouseStocks] = useState<{ [wh: string]: number }>({});
   const [editItemReceived, setEditItemReceived] = useState<number>(0);
   const [editItemNotes, setEditItemNotes] = useState('');
 
@@ -148,11 +156,13 @@ export default function InventoryDesk({
   // Package Assembly Modal
   const [isAssembleModalOpen, setIsAssembleModalOpen] = useState(false);
   const [selectedPackageForAssembly, setSelectedPackageForAssembly] = useState<InventoryPackage | null>(null);
+  const [assembleWarehouse, setAssembleWarehouse] = useState<string>('');
   const [assembleCount, setAssembleCount] = useState<number>(10);
 
   // Package Disassemble Modal
   const [isDisassembleModalOpen, setIsDisassembleModalOpen] = useState(false);
   const [selectedPackageForDisassemble, setSelectedPackageForDisassemble] = useState<InventoryPackage | null>(null);
+  const [disassembleWarehouse, setDisassembleWarehouse] = useState<string>('');
   const [disassembleCount, setDisassembleCount] = useState<number>(5);
 
   // Create Package Recipe Modal
@@ -160,6 +170,13 @@ export default function InventoryDesk({
   const [newPackageName, setNewPackageName] = useState('');
   const [newPackageDescription, setNewPackageDescription] = useState('');
   const [selectedRecipeItems, setSelectedRecipeItems] = useState<{ itemId: string; quantity: number }[]>([]);
+
+  // Add Warehouse Modal & Management Hub
+  const [isAddWarehouseModalOpen, setIsAddWarehouseModalOpen] = useState(false);
+  const [isManageWarehousesModalOpen, setIsManageWarehousesModalOpen] = useState(false);
+  const [editingWarehouseName, setEditingWarehouseName] = useState<string | null>(null);
+  const [renameWarehouseInput, setRenameWarehouseInput] = useState('');
+  const [newWarehouseInput, setNewWarehouseInput] = useState('');
 
   // Alert / Feedback
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -171,9 +188,88 @@ export default function InventoryDesk({
     }, 5500);
   };
 
+  // Warehouses list for active program
+  const programWarehouses = useMemo(() => {
+    if (!activeProgram) return ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'];
+    if (activeProgram.warehouses && activeProgram.warehouses.length > 0) {
+      return activeProgram.warehouses;
+    }
+    return ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'];
+  }, [activeProgram]);
+
+  // Selected Warehouse Location ('ALL' or specific warehouse name)
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>('ALL');
+
+  // Synchronize selectedWarehouse with activeProgram warehouses
+  useEffect(() => {
+    if (activeProgram) {
+      const whs = activeProgram.warehouses && activeProgram.warehouses.length > 0 
+        ? activeProgram.warehouses 
+        : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'];
+      if (selectedWarehouse !== 'ALL' && !whs.includes(selectedWarehouse)) {
+        setSelectedWarehouse('ALL');
+      }
+    }
+  }, [activeProgram]);
+
   // Helper getters for active program
   const currentItems = useMemo(() => activeProgram?.inventoryItems || [], [activeProgram]);
   const currentPackages = useMemo(() => activeProgram?.inventoryPackages || [], [activeProgram]);
+
+  // Get item stock for a specific warehouse
+  const getItemWarehouseStock = (item: InventoryItem, whName: string) => {
+    if (item.warehouseStocks && item.warehouseStocks[whName]) {
+      const ws = item.warehouseStocks[whName];
+      return {
+        totalReceived: ws.totalReceived || 0,
+        allocatedToPackages: ws.allocatedToPackages || 0,
+        remaining: Math.max(0, (ws.totalReceived || 0) - (ws.allocatedToPackages || 0))
+      };
+    }
+    // Fallback if legacy item without warehouseStocks:
+    if (!item.warehouseStocks || Object.keys(item.warehouseStocks).length === 0) {
+      if (whName === programWarehouses[0]) {
+        return {
+          totalReceived: item.totalReceived || 0,
+          allocatedToPackages: item.allocatedToPackages || 0,
+          remaining: Math.max(0, (item.totalReceived || 0) - (item.allocatedToPackages || 0))
+        };
+      }
+    }
+    return {
+      totalReceived: 0,
+      allocatedToPackages: 0,
+      remaining: 0
+    };
+  };
+
+  // Get effective stock based on selected warehouse (or ALL)
+  const getItemEffectiveStock = (item: InventoryItem, whName: string = selectedWarehouse) => {
+    if (whName === 'ALL') {
+      return {
+        totalReceived: item.totalReceived,
+        allocatedToPackages: item.allocatedToPackages,
+        remaining: Math.max(0, item.totalReceived - item.allocatedToPackages)
+      };
+    }
+    return getItemWarehouseStock(item, whName);
+  };
+
+  // Get package assembled quantity in a warehouse
+  const getPackageWarehouseAssembled = (pkg: InventoryPackage, whName: string = selectedWarehouse) => {
+    if (whName === 'ALL') {
+      return pkg.assembledQuantity || 0;
+    }
+    if (pkg.warehouseAssembled && pkg.warehouseAssembled[whName] !== undefined) {
+      return pkg.warehouseAssembled[whName];
+    }
+    if (!pkg.warehouseAssembled || Object.keys(pkg.warehouseAssembled).length === 0) {
+      if (whName === programWarehouses[0]) {
+        return pkg.assembledQuantity || 0;
+      }
+    }
+    return 0;
+  };
 
   // Total served packages for active program from serviceRecords
   const distributedCount = useMemo(() => {
@@ -193,8 +289,11 @@ export default function InventoryDesk({
     return Math.max(0, totalAssembled - distributedCount);
   }, [totalAssembled, distributedCount]);
 
-  // Helper to calculate maximum possible packages that CAN be assembled for a specific package bundle
-  const calculateMaxAssembleCapacity = (pkg: InventoryPackage): { maxUnits: number; bottleneckItem: string | null } => {
+  // Helper to calculate maximum possible packages that CAN be assembled
+  const calculateMaxAssembleCapacity = (
+    pkg: InventoryPackage,
+    targetWh: string = selectedWarehouse
+  ): { maxUnits: number; bottleneckItem: string | null } => {
     if (!pkg.items || pkg.items.length === 0) return { maxUnits: 0, bottleneckItem: null };
 
     let minUnits = Infinity;
@@ -207,12 +306,14 @@ export default function InventoryDesk({
         bottleneck = req.itemName;
         break;
       }
-      const availableRaw = Math.max(0, rawItem.totalReceived - rawItem.allocatedToPackages);
+      const effStock = getItemEffectiveStock(rawItem, targetWh);
+      const availableRaw = effStock.remaining;
       const possibleWithThisItem = Math.floor(availableRaw / req.quantityPerPackage);
 
       if (possibleWithThisItem < minUnits) {
         minUnits = possibleWithThisItem;
-        bottleneck = `${rawItem.name} (${availableRaw} ${rawItem.unit} অবশিষ্ট)`;
+        const whLabel = targetWh === 'ALL' ? '' : ` (${targetWh} গুদামে)`;
+        bottleneck = `${rawItem.name}${whLabel} (${availableRaw} ${rawItem.unit} অবশিষ্ট)`;
       }
     }
 
@@ -222,10 +323,191 @@ export default function InventoryDesk({
     };
   };
 
-  // 1. ADD NEW RAW ITEM
+  // ADD NEW WAREHOUSE LOCATION
+  const handleAddNewWarehouse = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeProgram) return;
+    const trimmed = newWarehouseInput.trim();
+    if (!trimmed) {
+      showAlert('error', 'গুদামের নাম প্রদান করুন!');
+      return;
+    }
+    if (programWarehouses.includes(trimmed)) {
+      showAlert('error', `"${trimmed}" গুদাম ইতোমধ্যে তালিকায় রয়েছে!`);
+      return;
+    }
+
+    const updatedWarehouses = [...programWarehouses, trimmed];
+    onUpdateProgramInventory(activeProgram.id, currentItems, currentPackages, updatedWarehouses);
+    setSelectedWarehouse(trimmed);
+    setIsAddWarehouseModalOpen(false);
+    setNewWarehouseInput('');
+    showAlert('success', `নতুন গুদাম/লোকেশন "${trimmed}" সফলভাবে তৈরি করা হয়েছে!`);
+  };
+
+  // RENAME WAREHOUSE LOCATION
+  const handleRenameWarehouse = (oldName: string, newName: string) => {
+    if (!activeProgram) return;
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      showAlert('error', 'গুদামের নাম প্রদান করুন!');
+      return;
+    }
+    if (trimmed === oldName) {
+      setEditingWarehouseName(null);
+      return;
+    }
+    if (programWarehouses.includes(trimmed)) {
+      showAlert('error', `"${trimmed}" নামের গুদাম ইতোমধ্যে তালিকায় রয়েছে!`);
+      return;
+    }
+
+    const updatedWarehouses = programWarehouses.map(w => w === oldName ? trimmed : w);
+
+    // Migrate warehouseStocks across items
+    const updatedItems = currentItems.map(item => {
+      if (!item.warehouseStocks || !item.warehouseStocks[oldName]) return item;
+      const newWhStocks = { ...item.warehouseStocks };
+      newWhStocks[trimmed] = newWhStocks[oldName];
+      delete newWhStocks[oldName];
+      return {
+        ...item,
+        warehouseStocks: newWhStocks,
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    // Migrate warehouseAssembled across packages
+    const updatedPackages = currentPackages.map(pkg => {
+      if (!pkg.warehouseAssembled || pkg.warehouseAssembled[oldName] === undefined) return pkg;
+      const newWhAssembled = { ...pkg.warehouseAssembled };
+      newWhAssembled[trimmed] = newWhAssembled[oldName];
+      delete newWhAssembled[oldName];
+      return {
+        ...pkg,
+        warehouseAssembled: newWhAssembled,
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    if (selectedWarehouse === oldName) {
+      setSelectedWarehouse(trimmed);
+    }
+
+    onUpdateProgramInventory(activeProgram.id, updatedItems, updatedPackages, updatedWarehouses);
+    setEditingWarehouseName(null);
+    showAlert('success', `গুদামের নাম "${oldName}" পরিবর্তন করে "${trimmed}" রাখা হয়েছে এবং সকল স্টক সমন্বয় করা হয়েছে!`);
+  };
+
+  // DELETE WAREHOUSE LOCATION
+  const handleDeleteWarehouse = (whName: string) => {
+    if (!activeProgram) return;
+    if (programWarehouses.length <= 1) {
+      showAlert('error', 'কমপক্ষে একটি গুদাম অবশ্যই থাকতে হবে! শেষ গুদামটি মুছে ফেলা যাবে না।');
+      return;
+    }
+
+    const totalInWh = currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, whName).totalReceived, 0);
+    const packsInWh = currentPackages.reduce((sum, p) => sum + getPackageWarehouseAssembled(p, whName), 0);
+
+    const confirmMsg = totalInWh > 0 || packsInWh > 0
+      ? `সতর্কতা: "${whName}" গুদামে মোট ${totalInWh} টি পণ্যের কাঁচামাল এবং ${packsInWh} টি প্রস্তুতকৃত প্যাকেজ রয়েছে!\n\nআপনি কি নিশ্চিত যে এই গুদামটি মুছে ফেলতে চান? এতে এই গুদামের ডেটা বাদ যাবে।`
+      : `আপনি কি নিশ্চিতভাবে "${whName}" গুদামটি তালিকা থেকে মুছে ফেলতে চান?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const updatedWarehouses = programWarehouses.filter(w => w !== whName);
+
+    // Clean from items
+    const updatedItems = currentItems.map(item => {
+      if (!item.warehouseStocks || !item.warehouseStocks[whName]) return item;
+      const newWhStocks = { ...item.warehouseStocks };
+      delete newWhStocks[whName];
+      const newTotalReceived = Object.values(newWhStocks).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+      const newAllocTotal = Object.values(newWhStocks).reduce((sum: number, ws: any) => sum + (Number(ws?.allocatedToPackages) || 0), 0);
+      return {
+        ...item,
+        totalReceived: newTotalReceived,
+        allocatedToPackages: newAllocTotal,
+        warehouseStocks: newWhStocks,
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    // Clean from packages
+    const updatedPackages = currentPackages.map(pkg => {
+      if (!pkg.warehouseAssembled || pkg.warehouseAssembled[whName] === undefined) return pkg;
+      const newWhAssembled = { ...pkg.warehouseAssembled };
+      delete newWhAssembled[whName];
+      const newTotalAssembled = Object.values(newWhAssembled).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0);
+      return {
+        ...pkg,
+        assembledQuantity: newTotalAssembled,
+        warehouseAssembled: newWhAssembled,
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+    if (selectedWarehouse === whName) {
+      setSelectedWarehouse('ALL');
+    }
+
+    onUpdateProgramInventory(activeProgram.id, updatedItems, updatedPackages, updatedWarehouses);
+    showAlert('info', `গুদাম "${whName}" সফলভাবে মুছে ফেলা হয়েছে।`);
+  };
+
+  // 1. ADD RAW ITEM (NEW OR CATALOG PICK)
   const handleAddNewItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeProgram) return;
+
+    const targetWh = addItemWarehouse || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+
+    if (addItemMode === 'catalog') {
+      if (!selectedCatalogItemId) {
+        showAlert('error', 'ক্যাটালগ থেকে একটি পণ্য নির্বাচন করুন!');
+        return;
+      }
+      const existing = currentItems.find(i => i.id === selectedCatalogItemId);
+      if (!existing) return;
+
+      const qty = Number(newItemReceived);
+      if (qty < 0) {
+        showAlert('error', 'প্রাপ্ত সংখ্যা ০ বা তার বেশি হতে হবে!');
+        return;
+      }
+
+      const updatedItems = currentItems.map(item => {
+        if (item.id === existing.id) {
+          const currentWhs = { ...(item.warehouseStocks || {}) };
+          const curStock = getItemWarehouseStock(item, targetWh);
+          currentWhs[targetWh] = {
+            ...curStock,
+            totalReceived: curStock.totalReceived + qty,
+            updatedAt: new Date().toISOString()
+          };
+
+          const newTotalReceived = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+
+          return {
+            ...item,
+            totalReceived: newTotalReceived,
+            warehouseStocks: currentWhs,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return item;
+      });
+
+      onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
+      showAlert('success', `"${existing.name}" এ "${targetWh}" গুদামে +${qty} ${existing.unit} সফলভাবে যোগ করা হয়েছে!`);
+      setIsAddItemModalOpen(false);
+      setSelectedCatalogItemId('');
+      setNewItemReceived(500);
+      return;
+    }
+
+    // New item creation
     if (!newItemName.trim()) {
       showAlert('error', 'পণ্যের নাম দেওয়া আবশ্যক!');
       return;
@@ -236,6 +518,14 @@ export default function InventoryDesk({
     }
 
     const newItemId = `ITEM-${Date.now().toString().slice(-4)}`;
+    const initialWarehouseStocks: { [wh: string]: { totalReceived: number; allocatedToPackages: number } } = {};
+    programWarehouses.forEach(wh => {
+      initialWarehouseStocks[wh] = {
+        totalReceived: wh === targetWh ? Number(newItemReceived) : 0,
+        allocatedToPackages: 0
+      };
+    });
+
     const newItem: InventoryItem = {
       id: newItemId,
       programId: activeProgram.id,
@@ -244,6 +534,7 @@ export default function InventoryDesk({
       unit: newItemUnit,
       totalReceived: Number(newItemReceived),
       allocatedToPackages: 0,
+      warehouseStocks: initialWarehouseStocks,
       notes: newItemNotes.trim(),
       createdAt: new Date().toISOString()
     };
@@ -251,7 +542,7 @@ export default function InventoryDesk({
     const updatedItems = [...currentItems, newItem];
     onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
 
-    showAlert('success', `"${newItem.name}" (${newItem.totalReceived} ${newItem.unit}) সফলভাবে ইনভেন্টরিতে যুক্ত হয়েছে!`);
+    showAlert('success', `"${newItem.name}" (${newItem.totalReceived} ${newItem.unit}) "${targetWh}" গুদামের স্টকে যোগ করা হয়েছে!`);
     setIsAddItemModalOpen(false);
     setNewItemName('');
     setNewItemReceived(500);
@@ -259,16 +550,38 @@ export default function InventoryDesk({
   };
 
   // 2. QUICK 1-CLICK INCREMENT (+1)
-  const handleQuickIncrement = (itemId: string) => {
+  const handleQuickIncrement = (itemId: string, explicitWh?: string) => {
     if (!activeProgram) return;
     const item = currentItems.find(i => i.id === itemId);
     if (!item) return;
 
+    if (selectedWarehouse === 'ALL' && !explicitWh) {
+      handleOpenCustomStockModal(item, 'add');
+      showAlert('info', `অনুগ্রহ করে গুদাম নিশ্চিত করুন: "${item.name}" এর স্টক কোন গুদামে বাড়াতে চান?`);
+      return;
+    }
+
+    const targetWh = explicitWh || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+    if (!targetWh) return;
+
     const updatedItems = currentItems.map(i => {
       if (i.id === itemId) {
+        const currentWhs = { ...(i.warehouseStocks || {}) };
+        const currentWhStock = getItemWarehouseStock(i, targetWh);
+        const newWhReceived = currentWhStock.totalReceived + 1;
+
+        currentWhs[targetWh] = {
+          ...currentWhStock,
+          totalReceived: newWhReceived,
+          updatedAt: new Date().toISOString()
+        };
+
+        const newTotalReceived = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+
         return {
           ...i,
-          totalReceived: i.totalReceived + 1,
+          totalReceived: newTotalReceived,
+          warehouseStocks: currentWhs,
           updatedAt: new Date().toISOString()
         };
       }
@@ -276,31 +589,52 @@ export default function InventoryDesk({
     });
 
     onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
-    showAlert('success', `"${item.name}": +১ যোগ করা হয়েছে (মোট: ${item.totalReceived + 1} ${item.unit})`);
+    showAlert('success', `[📍 ${targetWh} গুদাম] "${item.name}": +১ যোগ হয়েছে (মোট: ${getItemWarehouseStock(item, targetWh).totalReceived + 1} ${item.unit})`);
   };
 
   // 2.1 QUICK 1-CLICK DECREMENT (-1)
-  const handleQuickDecrement = (itemId: string) => {
+  const handleQuickDecrement = (itemId: string, explicitWh?: string) => {
     if (!activeProgram) return;
     const item = currentItems.find(i => i.id === itemId);
     if (!item) return;
 
-    const remainingInStore = Math.max(0, item.totalReceived - item.allocatedToPackages);
-    if (remainingInStore <= 0) {
-      showAlert('error', `"${item.name}" থেকে আর কমানো যাবে না! গুদামে অবশিষ্ট স্টক নেই (${item.allocatedToPackages} ${item.unit} প্যাকেজে বরাদ্দ আছে)।`);
+    if (selectedWarehouse === 'ALL' && !explicitWh) {
+      handleOpenCustomStockModal(item, 'deduct');
+      showAlert('info', `অনুগ্রহ করে গুদাম নিশ্চিত করুন: "${item.name}" এর স্টক কোন গুদাম থেকে কমাতে চান?`);
       return;
     }
 
-    if (item.totalReceived <= 0) {
+    const targetWh = explicitWh || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+    if (!targetWh) return;
+
+    const currentWhStock = getItemWarehouseStock(item, targetWh);
+    if (currentWhStock.remaining <= 0) {
+      showAlert('error', `"${item.name}" থেকে আর কমানো যাবে না! "${targetWh}" গুদামে অবশিষ্ট স্টক নেই (${currentWhStock.allocatedToPackages} ${item.unit} প্যাকেজে বরাদ্দ আছে)।`);
+      return;
+    }
+
+    if (currentWhStock.totalReceived <= 0) {
       showAlert('error', 'স্টক ০ এর নিচে নামানো সম্ভব নয়!');
       return;
     }
 
     const updatedItems = currentItems.map(i => {
       if (i.id === itemId) {
+        const currentWhs = { ...(i.warehouseStocks || {}) };
+        const newWhReceived = Math.max(currentWhStock.allocatedToPackages, currentWhStock.totalReceived - 1);
+
+        currentWhs[targetWh] = {
+          ...currentWhStock,
+          totalReceived: newWhReceived,
+          updatedAt: new Date().toISOString()
+        };
+
+        const newTotalReceived = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+
         return {
           ...i,
-          totalReceived: Math.max(i.allocatedToPackages, i.totalReceived - 1),
+          totalReceived: newTotalReceived,
+          warehouseStocks: currentWhs,
           updatedAt: new Date().toISOString()
         };
       }
@@ -308,12 +642,13 @@ export default function InventoryDesk({
     });
 
     onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
-    showAlert('info', `"${item.name}": -১ কমানো হয়েছে (মোট: ${item.totalReceived - 1} ${item.unit})`);
+    showAlert('info', `"${item.name}" [${targetWh}]: -১ কমানো হয়েছে (অবশিষ্ট: ${currentWhStock.remaining - 1} ${item.unit})`);
   };
 
-  // 2.2 OPEN CUSTOM STOCK ADJUSTMENT MODAL (+/- 500, 600, etc.)
+  // 2.2 OPEN CUSTOM STOCK ADJUSTMENT MODAL
   const handleOpenCustomStockModal = (item: InventoryItem, defaultType: 'add' | 'deduct' = 'add') => {
     setSelectedItemForAdjustment(item);
+    setAdjustmentWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
     setAdjustmentType(defaultType);
     setAdjustmentQuantity(500);
     setAdjustmentNote('');
@@ -327,26 +662,37 @@ export default function InventoryDesk({
 
     const item = selectedItemForAdjustment;
     const qty = Number(adjustmentQuantity);
+    const targetWh = adjustmentWarehouse || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+    const currentWhStock = getItemWarehouseStock(item, targetWh);
 
     if (adjustmentType === 'deduct') {
-      const available = Math.max(0, item.totalReceived - item.allocatedToPackages);
-      if (qty > available) {
-        showAlert('error', `সর্বোচ্চ ${available} ${item.unit} বাদ দেওয়া যাবে! কারণ ${item.allocatedToPackages} ${item.unit} মালামাল ইতোমধ্যে প্রস্তুতকৃত প্যাকেজে বরাদ্দ রয়েছে।`);
+      if (qty > currentWhStock.remaining) {
+        showAlert('error', `"${targetWh}" গুদাম থেকে সর্বোচ্চ ${currentWhStock.remaining} ${item.unit} বাদ দেওয়া যাবে! কারণ ${currentWhStock.allocatedToPackages} ${item.unit} ইতোমধ্যে প্যাকেজে বরাদ্দ।`);
         return;
       }
     }
 
-    const newTotalReceived = adjustmentType === 'add'
-      ? item.totalReceived + qty
-      : Math.max(item.allocatedToPackages, item.totalReceived - qty);
+    const newWhReceived = adjustmentType === 'add'
+      ? currentWhStock.totalReceived + qty
+      : Math.max(currentWhStock.allocatedToPackages, currentWhStock.totalReceived - qty);
 
     const updatedItems = currentItems.map(i => {
       if (i.id === item.id) {
+        const currentWhs = { ...(i.warehouseStocks || {}) };
+        currentWhs[targetWh] = {
+          ...currentWhStock,
+          totalReceived: newWhReceived,
+          updatedAt: new Date().toISOString()
+        };
+
+        const newTotalReceived = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+
         return {
           ...i,
           totalReceived: newTotalReceived,
+          warehouseStocks: currentWhs,
           notes: adjustmentNote.trim() 
-            ? `${i.notes ? i.notes + ' | ' : ''}${adjustmentType === 'add' ? '+' : '-'}${qty} (${adjustmentNote.trim()})` 
+            ? `${i.notes ? i.notes + ' | ' : ''}[${targetWh}] ${adjustmentType === 'add' ? '+' : '-'}${qty} (${adjustmentNote.trim()})` 
             : i.notes,
           updatedAt: new Date().toISOString()
         };
@@ -357,9 +703,9 @@ export default function InventoryDesk({
     onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
 
     if (adjustmentType === 'add') {
-      showAlert('success', `"${item.name}" এ কাস্টম +${qty} ${item.unit} সফলভাবে যোগ করা হয়েছে! নতুন মোট: ${newTotalReceived} ${item.unit}`);
+      showAlert('success', `"${item.name}" [${targetWh}] এ কাস্টম +${qty} ${item.unit} যোগ করা হয়েছে! নতুন মোট: ${newWhReceived} ${item.unit}`);
     } else {
-      showAlert('info', `"${item.name}" থেকে কাস্টম -${qty} ${item.unit} সফলভাবে বাদ দেওয়া হয়েছে। নতুন মোট: ${newTotalReceived} ${item.unit}`);
+      showAlert('info', `"${item.name}" [${targetWh}] থেকে কাস্টম -${qty} ${item.unit} বাদ দেওয়া হয়েছে। নতুন মোট: ${newWhReceived} ${item.unit}`);
     }
 
     setIsCustomStockModalOpen(false);
@@ -374,6 +720,11 @@ export default function InventoryDesk({
     setEditItemName(item.name);
     setEditItemCategory(item.category || 'শীতবস্ত্র');
     setEditItemUnit(item.unit || 'পিস (Pcs)');
+    const whStocksObj: { [wh: string]: number } = {};
+    programWarehouses.forEach(wh => {
+      whStocksObj[wh] = getItemWarehouseStock(item, wh).totalReceived;
+    });
+    setEditItemWarehouseStocks(whStocksObj);
     setEditItemReceived(item.totalReceived);
     setEditItemNotes(item.notes || '');
     setIsEditItemModalOpen(true);
@@ -389,10 +740,24 @@ export default function InventoryDesk({
       return;
     }
 
-    if (editItemReceived < selectedItemForEdit.allocatedToPackages) {
-      showAlert('error', `মোট প্রাপ্ত সংখ্যা প্যাকেজে বরাদ্দকৃত (${selectedItemForEdit.allocatedToPackages} ${selectedItemForEdit.unit}) এর চেয়ে কম হতে পারে না!`);
-      return;
-    }
+    // Compute updated warehouseStocks
+    const updatedWarehouseStocks = { ...(selectedItemForEdit.warehouseStocks || {}) };
+    let newTotalReceivedSum = 0;
+
+    programWarehouses.forEach(wh => {
+      const val = Number(editItemWarehouseStocks[wh] || 0);
+      const curAlloc = getItemWarehouseStock(selectedItemForEdit, wh).allocatedToPackages;
+      if (val < curAlloc) {
+        showAlert('error', `"${wh}" গুদামে প্রাপ্ত সংখ্যা (${val}) বরাদ্দকৃতের (${curAlloc}) চেয়ে কম হতে পারে না!`);
+        return;
+      }
+      updatedWarehouseStocks[wh] = {
+        totalReceived: val,
+        allocatedToPackages: curAlloc,
+        updatedAt: new Date().toISOString()
+      };
+      newTotalReceivedSum += val;
+    });
 
     const updatedItems = currentItems.map(item => {
       if (item.id === selectedItemForEdit.id) {
@@ -401,7 +766,8 @@ export default function InventoryDesk({
           name: editItemName.trim(),
           category: editItemCategory,
           unit: editItemUnit,
-          totalReceived: Number(editItemReceived),
+          totalReceived: newTotalReceivedSum,
+          warehouseStocks: updatedWarehouseStocks,
           notes: editItemNotes.trim(),
           updatedAt: new Date().toISOString()
         };
@@ -430,15 +796,27 @@ export default function InventoryDesk({
     setSelectedItemForEdit(null);
   };
 
-  // 2.6 LEGACY QUICK STOCK IN
+  // 2.6 QUICK STOCK IN (LEGACY HELPER)
   const handleStockIn = () => {
     if (!activeProgram || !selectedItemForStockIn || stockInQuantity <= 0) return;
+    const targetWh = selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0];
+    const qty = Number(stockInQuantity);
 
     const updatedItems = currentItems.map(item => {
       if (item.id === selectedItemForStockIn.id) {
+        const currentWhs = { ...(item.warehouseStocks || {}) };
+        const curStock = getItemWarehouseStock(item, targetWh);
+        currentWhs[targetWh] = {
+          ...curStock,
+          totalReceived: curStock.totalReceived + qty,
+          updatedAt: new Date().toISOString()
+        };
+        const newTotalReceived = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.totalReceived) || 0), 0);
+
         return {
           ...item,
-          totalReceived: item.totalReceived + Number(stockInQuantity),
+          totalReceived: newTotalReceived,
+          warehouseStocks: currentWhs,
           updatedAt: new Date().toISOString()
         };
       }
@@ -446,7 +824,7 @@ export default function InventoryDesk({
     });
 
     onUpdateProgramInventory(activeProgram.id, updatedItems, currentPackages);
-    showAlert('success', `"${selectedItemForStockIn.name}" এ আরও ${stockInQuantity} ${selectedItemForStockIn.unit} যোগ করা হয়েছে!`);
+    showAlert('success', `"${selectedItemForStockIn.name}" [${targetWh}] এ আরও ${qty} ${selectedItemForStockIn.unit} যোগ করা হয়েছে!`);
     setIsStockInModalOpen(false);
     setSelectedItemForStockIn(null);
   };
@@ -457,7 +835,6 @@ export default function InventoryDesk({
     const itemToDelete = currentItems.find(i => i.id === itemId);
     if (!itemToDelete) return;
 
-    // Check if item is used in any package recipe
     const usedInPackage = currentPackages.some(pkg => 
       pkg.items.some(req => req.itemId === itemId)
     );
@@ -493,7 +870,6 @@ export default function InventoryDesk({
       return;
     }
 
-    // Build package requirements
     const packageItems: PackageItemRequirement[] = selectedRecipeItems.map(sel => {
       const raw = currentItems.find(i => i.id === sel.itemId);
       return {
@@ -505,6 +881,11 @@ export default function InventoryDesk({
     });
 
     const newPkgId = `PKG-${Date.now().toString().slice(-4)}`;
+    const initialWhAssembled: { [wh: string]: number } = {};
+    programWarehouses.forEach(wh => {
+      initialWhAssembled[wh] = 0;
+    });
+
     const newPackage: InventoryPackage = {
       id: newPkgId,
       programId: activeProgram.id,
@@ -512,50 +893,72 @@ export default function InventoryDesk({
       description: newPackageDescription.trim(),
       items: packageItems,
       assembledQuantity: 0,
+      warehouseAssembled: initialWhAssembled,
       createdAt: new Date().toISOString()
     };
 
     const updatedPackages = [...currentPackages, newPackage];
     onUpdateProgramInventory(activeProgram.id, currentItems, updatedPackages);
 
-    showAlert('success', `নতুন প্যাকেজ রেসিপি "${newPackage.name}" প্রস্তুত হয়েছে! এবার মালামাল দিয়ে প্যাকেজ অ্যাসেম্বল করুন।`);
+    showAlert('success', `নতুন প্যাকেজ রেসিপি "${newPackage.name}" প্রস্তুত হয়েছে! এবার গুদামে মালামাল দিয়ে প্যাকেজ অ্যাসেম্বল করুন।`);
     setIsCreatePackageModalOpen(false);
     setNewPackageName('');
     setNewPackageDescription('');
     setSelectedRecipeItems([]);
   };
 
-  // 5. ASSEMBLE PACKAGES (Convert Raw Items -> Assembled Packages)
+  // 5. ASSEMBLE PACKAGES (PER WAREHOUSE)
   const handleAssemblePackages = () => {
     if (!activeProgram || !selectedPackageForAssembly || assembleCount <= 0) return;
 
     const count = Number(assembleCount);
-    const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(selectedPackageForAssembly);
+    const targetWh = assembleWarehouse || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+    const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(selectedPackageForAssembly, targetWh);
 
     if (count > maxUnits) {
-      showAlert('error', `পর্যাপ্ত মালামাল নেই! সর্বোচ্চ ${maxUnits} টি প্যাকেজ বানানো সম্ভব (${bottleneckItem})।`);
+      showAlert('error', `"${targetWh}" গুদামে পর্যাপ্ত কাঁচামাল নেই! সর্বোচ্চ ${maxUnits} টি প্যাকেজ প্রস্তুত সম্ভব (${bottleneckItem})।`);
       return;
     }
 
-    // Deduct raw materials by increasing allocatedToPackages
+    // Deduct raw materials from targetWh
     const updatedItems = currentItems.map(item => {
       const req = selectedPackageForAssembly.items.find(r => r.itemId === item.id);
       if (req) {
+        const currentWhs = { ...(item.warehouseStocks || {}) };
+        const curStock = getItemWarehouseStock(item, targetWh);
+        const addedAlloc = req.quantityPerPackage * count;
+
+        currentWhs[targetWh] = {
+          ...curStock,
+          allocatedToPackages: curStock.allocatedToPackages + addedAlloc,
+          updatedAt: new Date().toISOString()
+        };
+
+        const newAllocTotal = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.allocatedToPackages) || 0), 0);
+
         return {
           ...item,
-          allocatedToPackages: item.allocatedToPackages + (req.quantityPerPackage * count),
+          allocatedToPackages: newAllocTotal,
+          warehouseStocks: currentWhs,
           updatedAt: new Date().toISOString()
         };
       }
       return item;
     });
 
-    // Increase package assembledQuantity
+    // Increase package assembled count in targetWh
     const updatedPackages = currentPackages.map(pkg => {
       if (pkg.id === selectedPackageForAssembly.id) {
+        const currentWhAssembled = { ...(pkg.warehouseAssembled || {}) };
+        const currentQtyInWh = getPackageWarehouseAssembled(pkg, targetWh);
+        currentWhAssembled[targetWh] = currentQtyInWh + count;
+
+        const newTotalAssembled = Object.values(currentWhAssembled).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0);
+
         return {
           ...pkg,
-          assembledQuantity: pkg.assembledQuantity + count,
+          assembledQuantity: newTotalAssembled,
+          warehouseAssembled: currentWhAssembled,
           updatedAt: new Date().toISOString()
         };
       }
@@ -564,48 +967,70 @@ export default function InventoryDesk({
 
     onUpdateProgramInventory(activeProgram.id, updatedItems, updatedPackages);
 
-    showAlert('success', `অভিনন্দন! সফলভাবে ${count} টি "${selectedPackageForAssembly.name}" প্যাকেজ প্রস্তুত ও প্যাক করা হয়েছে! প্রোগ্রাম ডিরেক্টরিতে বিতরণযোগ্য স্টক স্বয়ংক্রিয়ভাবে বৃদ্ধি পেয়েছে।`);
+    showAlert('success', `অভিনন্দন! "${targetWh}" গুদামে সফলভাবে ${count} টি "${selectedPackageForAssembly.name}" প্যাকেজ প্রস্তুত ও প্যাক করা হয়েছে!`);
     setIsAssembleModalOpen(false);
     setSelectedPackageForAssembly(null);
   };
 
-  // 6. DISASSEMBLE / UNPACK (Return unserved packages back to raw stock)
+  // 6. DISASSEMBLE / UNPACK (PER WAREHOUSE)
   const handleDisassemblePackages = () => {
     if (!activeProgram || !selectedPackageForDisassemble || disassembleCount <= 0) return;
 
     const count = Number(disassembleCount);
+    const targetWh = disassembleWarehouse || (selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+    const qtyInWh = getPackageWarehouseAssembled(selectedPackageForDisassemble, targetWh);
 
-    if (count > selectedPackageForDisassemble.assembledQuantity) {
-      showAlert('error', `সর্বোচ্চ ${selectedPackageForDisassemble.assembledQuantity} টি প্যাকেজ আনপ্যাক করা যাবে!`);
+    if (count > qtyInWh) {
+      showAlert('error', `"${targetWh}" গুদামে সর্বোচ্চ ${qtyInWh} টি প্যাকেজ আনপ্যাক করা যাবে!`);
       return;
     }
 
-    // Verify unserved packages availability
+    // Verify unserved packages overall
     const totalRemainingPacks = Math.max(0, totalAssembled - distributedCount);
     if (count > totalRemainingPacks) {
-      showAlert('error', `ইতোমধ্যে ${distributedCount} টি প্যাক সুবিধাভোগীদের মাঝে বিতরণ হয়ে গেছে! অবশিষ্ট অ-বিতরণকৃত ${totalRemainingPacks} টির বেশি আনপ্যাক করা যাবে না।`);
+      showAlert('error', `ইতোমধ্যে ${distributedCount} টি প্যাক বিতরণ হয়ে গেছে! অবশিষ্ট অ-বিতরণকৃত ${totalRemainingPacks} টির বেশি আনপ্যাক করা যাবে না।`);
       return;
     }
 
-    // Return raw materials back to store by decreasing allocatedToPackages
+    // Return raw items to targetWh
     const updatedItems = currentItems.map(item => {
       const req = selectedPackageForDisassemble.items.find(r => r.itemId === item.id);
       if (req) {
+        const currentWhs = { ...(item.warehouseStocks || {}) };
+        const curStock = getItemWarehouseStock(item, targetWh);
+        const reducedAlloc = req.quantityPerPackage * count;
+
+        currentWhs[targetWh] = {
+          ...curStock,
+          allocatedToPackages: Math.max(0, curStock.allocatedToPackages - reducedAlloc),
+          updatedAt: new Date().toISOString()
+        };
+
+        const newAllocTotal = Object.values(currentWhs).reduce((sum: number, ws: any) => sum + (Number(ws?.allocatedToPackages) || 0), 0);
+
         return {
           ...item,
-          allocatedToPackages: Math.max(0, item.allocatedToPackages - (req.quantityPerPackage * count)),
+          allocatedToPackages: newAllocTotal,
+          warehouseStocks: currentWhs,
           updatedAt: new Date().toISOString()
         };
       }
       return item;
     });
 
-    // Decrease package assembledQuantity
+    // Decrease package assembled in targetWh
     const updatedPackages = currentPackages.map(pkg => {
       if (pkg.id === selectedPackageForDisassemble.id) {
+        const currentWhAssembled = { ...(pkg.warehouseAssembled || {}) };
+        const currentQtyInWh = getPackageWarehouseAssembled(pkg, targetWh);
+        currentWhAssembled[targetWh] = Math.max(0, currentQtyInWh - count);
+
+        const newTotalAssembled = Object.values(currentWhAssembled).reduce((sum: number, val: any) => sum + (Number(val) || 0), 0);
+
         return {
           ...pkg,
-          assembledQuantity: Math.max(0, pkg.assembledQuantity - count),
+          assembledQuantity: newTotalAssembled,
+          warehouseAssembled: currentWhAssembled,
           updatedAt: new Date().toISOString()
         };
       }
@@ -614,7 +1039,7 @@ export default function InventoryDesk({
 
     onUpdateProgramInventory(activeProgram.id, updatedItems, updatedPackages);
 
-    showAlert('info', `${count} টি প্যাকেজ আনপ্যাক করে সমপরিমাণ কাঁচামাল স্টোর গুদামে ফেরত নেওয়া হয়েছে।`);
+    showAlert('info', `"${targetWh}" গুদাম থেকে ${count} টি প্যাকেজ আনপ্যাক করে সমপরিমাণ কাঁচামাল স্টোর গুদামে ফিরিয়ে আনা হয়েছে।`);
     setIsDisassembleModalOpen(false);
     setSelectedPackageForDisassemble(null);
   };
@@ -1142,66 +1567,275 @@ export default function InventoryDesk({
             </div>
           </div>
 
-      {/* Program Summary KPI Bar */}
-      {activeProgram && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
-          {/* Total Raw Item Varieties */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">মোট মালামাল ভ্যারাইটি</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-slate-800 font-mono">{currentItems.length}</span>
-              <span className="text-xs text-slate-400 font-semibold">আইটেম</span>
+      {/* 2.1 WAREHOUSE / LOCATION SWITCHER BAR */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 shadow-xs">
+              <Building2 className="w-5 h-5 text-amber-700" />
             </div>
-            <span className="text-[10px] text-slate-400 block mt-1">গুদামে প্রাপ্ত পণ্যের ধরন</span>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-black text-slate-800">
+                  গুদাম ও লোকেশন নির্বাচন (Warehouses)
+                </h3>
+                {selectedWarehouse !== 'ALL' ? (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10.5px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    সক্রিয় গুদাম: <strong>{selectedWarehouse}</strong>
+                  </span>
+                ) : (
+                  <span className="bg-slate-100 text-slate-700 text-[10.5px] font-bold px-2.5 py-0.5 rounded-full border border-slate-200">
+                    সকল গুদাম সমন্বিত (All Warehouses)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11.5px] text-slate-500 mt-0.5 leading-snug">
+                {selectedWarehouse === 'ALL'
+                  ? 'সকল গুদাম ও ডিপোর সর্বমোট স্টক ও প্যাকেজের একত্রিত হিসাব প্রদর্শিত হচ্ছে।'
+                  : `বর্তমানে শুধুমাত্র "${selectedWarehouse}" গুদামের পণ্য স্টক, কাঁচামাল প্রাপ্তি ও প্যাকেজিং পরিচালিত হচ্ছে।`}
+              </p>
+            </div>
           </div>
 
-          {/* Configured Package Bundles */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">প্যাকেজ রেসিপি</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-indigo-700 font-mono">{currentPackages.length}</span>
-              <span className="text-xs text-slate-400 font-semibold">বান্ডেল</span>
+          {/* Warehouse Selector Buttons */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* All Warehouses Button */}
+            <button
+              onClick={() => setSelectedWarehouse('ALL')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs ${
+                selectedWarehouse === 'ALL'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+              }`}
+              title="সকল গুদামের সর্বমোট স্টক দেখুন"
+            >
+              <Boxes className="w-3.5 h-3.5 text-amber-400" />
+              <span>সকল গুদাম ({programWarehouses.length})</span>
+            </button>
+
+            {/* Individual Warehouses */}
+            {programWarehouses.map(wh => {
+              const whTotalItems = currentItems.filter(i => getItemWarehouseStock(i, wh).totalReceived > 0).length;
+              const isSelected = selectedWarehouse === wh;
+
+              return (
+                <button
+                  key={wh}
+                  onClick={() => setSelectedWarehouse(wh)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    isSelected
+                      ? 'bg-amber-600 text-white shadow-sm ring-2 ring-amber-400/50'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80'
+                  }`}
+                  title={`${wh} গুদামের স্টক পরিচালনা করুন (${whTotalItems} টি পণ্যে স্টক আছে)`}
+                >
+                  <MapPin className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-amber-600'}`} />
+                  <span>{wh}</span>
+                  <span className={`text-[9.5px] font-mono px-1.5 py-0.2 rounded font-bold ${
+                    isSelected ? 'bg-amber-700/60 text-amber-100' : 'bg-amber-200/70 text-amber-800'
+                  }`}>
+                    {whTotalItems}
+                  </span>
+                </button>
+              );
+            })}
+
+            {/* Manage Warehouses (Edit / Rename / Delete) */}
+            {canManageInventory && (
+              <button
+                onClick={() => setIsManageWarehousesModalOpen(true)}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                title="গুদামের নাম এডিট করুন, নতুন যোগ করুন বা মুছুন"
+              >
+                <span>⚙️ গুদাম ম্যানেজ ও এডিট</span>
+              </button>
+            )}
+
+            {/* Add Warehouse Button */}
+            {canManageInventory && (
+              <button
+                onClick={() => setIsAddWarehouseModalOpen(true)}
+                className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-dashed border-slate-300 hover:border-slate-400 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition active:scale-95"
+                title="প্রোগ্রামে নতুন কোনো গুদাম বা লোকেশন যুক্ত করুন"
+              >
+                <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                <span>+ গুদাম যোগ</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 2.2 HIGH-VISIBILITY ACTIVE WORKING WAREHOUSE BANNER (FOOLPROOF CONTEXT) */}
+      {selectedWarehouse !== 'ALL' ? (
+        <div className="bg-gradient-to-r from-emerald-900 via-slate-900 to-emerald-950 text-white rounded-2xl p-4 sm:p-5 shadow-md border border-emerald-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="relative shrink-0">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center font-bold text-lg">
+                📍
+              </div>
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
             </div>
-            <span className="text-[10px] text-slate-400 block mt-1">কম্বাইন্ড প্যাক কনফিগারেশন</span>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 px-2 py-0.5 rounded-md">
+                  কর্মস্থল লকড মোড
+                </span>
+                <h4 className="text-base font-black text-white">
+                  বর্তমান সক্রিয় কর্মক্ষেত্র: <span className="text-emerald-300 underline underline-offset-4">{selectedWarehouse} গুদাম</span>
+                </h4>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                ⚠️ <strong className="text-emerald-200">সতর্ক বার্তা:</strong> আপনি এখন <strong>{selectedWarehouse}</strong> গুদামের স্টকে কাজ করছেন। আপনার যেকোনো নতুন কাঁচামাল এন্ট্রি, কাস্টম স্টক ইন/আউট এবং প্যাকেজ তৈরি শুধুমাত্র <strong>{selectedWarehouse}</strong> গুদামে সংরক্ষিত হবে।
+              </p>
+            </div>
           </div>
 
-          {/* Total Assembled Packages */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">মোট প্রস্তুতকৃত প্যাকেজ</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-amber-600 font-mono">{totalAssembled}</span>
-              <span className="text-xs text-slate-400 font-semibold">প্যাক</span>
-            </div>
-            <span className="text-[10px] text-amber-600 font-semibold block mt-1">প্যাকিং সম্পন্ন হয়েছে</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsManageWarehousesModalOpen(true)}
+              className="px-3.5 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"
+            >
+              <span>✏️ নাম এডিট / সেটিংস</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedWarehouse('ALL')}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+            >
+              <span>🔄 গুদাম পরিবর্তন করুন</span>
+            </button>
           </div>
-
-          {/* Distributed Packages */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">বিতরণকৃত প্যাকেজ</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-blue-600 font-mono">{distributedCount}</span>
-              <span className="text-xs text-slate-400 font-semibold">প্যাক</span>
+        </div>
+      ) : (
+        <div className="bg-amber-50 border border-amber-300/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl mt-0.5">🌐</span>
+              <div>
+                <h4 className="text-xs font-black text-amber-950 uppercase tracking-wide flex items-center gap-2">
+                  <span>সার্বিক ভিউ মোড (সকল গুদাম সমন্বিত)</span>
+                  <span className="text-[10px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                    সতর্কতা
+                  </span>
+                </h4>
+                <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                  আপনি বর্তমানে সমস্ত গুদামের সম্মিলিত রিপোর্ট দেখছেন। ভুল গুদামে স্টক এন্ট্রি রোধ করতে, অনুগ্রহ করে নিচের থেকে আপনার কর্মস্থল গুদামটি নির্বাচন করে কাজ শুরু করুন:
+                </p>
+              </div>
             </div>
-            <span className="text-[10px] text-slate-400 block mt-1">লাইভ বিতরণ ডেস্কে দেওয়া হয়েছে</span>
-          </div>
 
-          {/* Remaining Available Packages */}
-          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-xs col-span-2 md:col-span-4 lg:col-span-1">
-            <span className="text-[10px] font-bold text-emerald-800 block uppercase tracking-wider mb-1">বিতরণযোগ্য অবশিষ্ট প্যাক</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-emerald-700 font-mono">{remainingPackages}</span>
-              <span className="text-xs text-emerald-600 font-bold">প্যাক</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              {programWarehouses.map(wh => (
+                <button
+                  key={wh}
+                  type="button"
+                  onClick={() => setSelectedWarehouse(wh)}
+                  className="px-3 py-2 bg-white hover:bg-amber-100 text-amber-950 font-black text-xs rounded-xl border border-amber-300 shadow-2xs transition cursor-pointer flex items-center gap-1.5 active:scale-95"
+                >
+                  <span>📍 {wh} এ যান &rarr;</span>
+                </button>
+              ))}
             </div>
-            <span className="text-[10px] text-emerald-700 font-bold block mt-1">
-              {remainingPackages > 0 ? '✓ বিতরণের জন্য প্রস্তুত' : '⚠️ স্টক শেষ, অ্যাসেম্বল করুন'}
-            </span>
           </div>
         </div>
       )}
 
+      {/* Program Summary KPI Bar (Dynamic based on selectedWarehouse) */}
+      {activeProgram && (() => {
+        const whItemVarieties = selectedWarehouse === 'ALL'
+          ? currentItems.length
+          : currentItems.filter(i => getItemWarehouseStock(i, selectedWarehouse).totalReceived > 0).length;
+
+        const whAssembledPacks = selectedWarehouse === 'ALL'
+          ? totalAssembled
+          : currentPackages.reduce((sum, p) => sum + getPackageWarehouseAssembled(p, selectedWarehouse), 0);
+
+        const whTotalReceivedUnits = selectedWarehouse === 'ALL'
+          ? currentItems.reduce((sum, i) => sum + i.totalReceived, 0)
+          : currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, selectedWarehouse).totalReceived, 0);
+
+        const whRemainingRawUnits = selectedWarehouse === 'ALL'
+          ? currentItems.reduce((sum, i) => sum + Math.max(0, i.totalReceived - i.allocatedToPackages), 0)
+          : currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, selectedWarehouse).remaining, 0);
+
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+            {/* Raw Item Varieties */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">
+                {selectedWarehouse === 'ALL' ? 'মোট পণ্য ভ্যারাইটি' : `পণ্য ভ্যারাইটি (${selectedWarehouse})`}
+              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-slate-800 font-mono">{whItemVarieties}</span>
+                <span className="text-xs text-slate-400 font-semibold">আইটেম</span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-1">মোট প্রাপ্ত: {whTotalReceivedUnits} একক</span>
+            </div>
+
+            {/* Configured Package Bundles */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">প্যাকেজ রেসিপি</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-indigo-700 font-mono">{currentPackages.length}</span>
+                <span className="text-xs text-slate-400 font-semibold">বান্ডেল</span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-1">কম্বাইন্ড প্যাক ডিজাইন</span>
+            </div>
+
+            {/* Assembled Packages */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">
+                {selectedWarehouse === 'ALL' ? 'মোট প্রস্তুতকৃত প্যাকেজ' : `প্রস্তুত প্যাকেজ (${selectedWarehouse})`}
+              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-amber-600 font-mono">{whAssembledPacks}</span>
+                <span className="text-xs text-slate-400 font-semibold">প্যাক</span>
+              </div>
+              <span className="text-[10px] text-amber-600 font-semibold block mt-1">প্যাকিং সম্পন্ন হয়েছে</span>
+            </div>
+
+            {/* Distributed Packages */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider mb-1">বিতরণকৃত প্যাকেজ</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-blue-600 font-mono">{distributedCount}</span>
+                <span className="text-xs text-slate-400 font-semibold">প্যাক</span>
+              </div>
+              <span className="text-[10px] text-slate-400 block mt-1">লাইভ বিতরণ ডেস্কে হস্তান্তর</span>
+            </div>
+
+            {/* Remaining Store Stock */}
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-xs col-span-2 md:col-span-4 lg:col-span-1">
+              <span className="text-[10px] font-bold text-emerald-800 block uppercase tracking-wider mb-1">
+                {selectedWarehouse === 'ALL' ? 'বিতরণযোগ্য অবশিষ্ট' : `গুদামে অবশিষ্ট কাঁচামাল`}
+              </span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-emerald-700 font-mono">
+                  {selectedWarehouse === 'ALL' ? remainingPackages : whRemainingRawUnits}
+                </span>
+                <span className="text-xs text-emerald-600 font-bold">
+                  {selectedWarehouse === 'ALL' ? 'প্যাক' : 'একক'}
+                </span>
+              </div>
+              <span className="text-[10px] text-emerald-700 font-bold block mt-1 truncate">
+                {selectedWarehouse === 'ALL' 
+                  ? (remainingPackages > 0 ? '✓ বিতরণের জন্য প্রস্তুত' : '⚠️ স্টক শেষ, অ্যাসেম্বল করুন')
+                  : `📍 ${selectedWarehouse} গুদাম`}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Tabs Control & Action Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setActiveTab('packages')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
@@ -1211,7 +1845,7 @@ export default function InventoryDesk({
             }`}
           >
             <Boxes className="w-4 h-4" />
-            <span>প্যাকেজ ব্যবস্থাপনা ও অ্যাসেম্বলি ({currentPackages.length})</span>
+            <span>প্যাকেজ ও অ্যাসেম্বলি ({currentPackages.length})</span>
           </button>
 
           <button
@@ -1235,29 +1869,34 @@ export default function InventoryDesk({
             }`}
           >
             <Eye className="w-4 h-4" />
-            <span>স্টক অডিট ও বিতরণ সারাংশ</span>
+            <span>গুদামভিত্তিক অডিট ও লেজার</span>
           </button>
         </div>
 
         {/* Global Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {activeTab === 'packages' && canCreatePackages && (
             <button
               onClick={() => setIsCreatePackageModalOpen(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer transition"
             >
               <PackagePlus className="w-4 h-4" />
-              <span>নতুন প্যাকেজ রেসিপি তৈরি</span>
+              <span>নতুন প্যাকেজ রেসিপি</span>
             </button>
           )}
 
           {activeTab === 'items' && canAddItems && (
             <button
-              onClick={() => setIsAddItemModalOpen(true)}
+              onClick={() => {
+                setAddItemWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+                setAddItemMode('new');
+                setSelectedCatalogItemId('');
+                setIsAddItemModalOpen(true);
+              }}
               className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer transition"
             >
               <Plus className="w-4 h-4" />
-              <span>নতুন মালামাল/পণ্য যোগ</span>
+              <span>নতুন পণ্য/স্টক যোগ</span>
             </button>
           )}
 
@@ -1299,21 +1938,33 @@ export default function InventoryDesk({
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               {currentPackages.map(pkg => {
-                const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(pkg);
-                const pkgServed = distributedCount; // In MWO, distributed portions track to program
+                const targetWh = selectedWarehouse !== 'ALL' ? selectedWarehouse : 'ALL';
+                const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(pkg, selectedWarehouse);
+                const pkgAssembledInView = getPackageWarehouseAssembled(pkg, selectedWarehouse);
+                const pkgServed = distributedCount;
                 const pkgAvailable = Math.max(0, pkg.assembledQuantity - pkgServed);
 
                 return (
                   <div key={pkg.id} className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm hover:shadow-md transition">
                     <div className="flex items-start justify-between gap-4 mb-3">
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
                             {pkg.id}
                           </span>
                           <span className="text-[10px] font-bold text-slate-400 font-mono">
                             {pkg.items.length} টি উপাদান
                           </span>
+                          {selectedWarehouse !== 'ALL' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-amber-700" />
+                              <span>{selectedWarehouse} গুদাম</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              সকল গুদাম সম্মিলিত
+                            </span>
+                          )}
                         </div>
                         <h3 className="text-base font-bold text-slate-900 leading-snug">
                           {pkg.name}
@@ -1323,13 +1974,25 @@ export default function InventoryDesk({
                             {pkg.description}
                           </p>
                         )}
+
+                        {/* Breakdown per warehouse when in ALL view */}
+                        {selectedWarehouse === 'ALL' && (
+                          <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                            <span className="text-[10px] font-bold text-slate-400">গুদামভিত্তিক প্রস্তুত:</span>
+                            {programWarehouses.map(wh => (
+                              <span key={wh} className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono font-semibold">
+                                📍 {wh}: <strong className="text-amber-800">{getPackageWarehouseAssembled(pkg, wh)}</strong> প্যাক
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       {/* Delete Recipe Button */}
                       {canCreatePackages && pkg.assembledQuantity === 0 && (
                         <button
                           onClick={() => handleDeletePackage(pkg.id)}
-                          className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition"
+                          className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                           title="মুছে ফেলুন"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -1345,7 +2008,9 @@ export default function InventoryDesk({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {pkg.items.map((item, idx) => {
                           const raw = currentItems.find(i => i.id === item.itemId);
-                          const rawAvail = raw ? Math.max(0, raw.totalReceived - raw.allocatedToPackages) : 0;
+                          const rawStock = raw ? getItemEffectiveStock(raw, selectedWarehouse) : { remaining: 0 };
+                          const rawAvail = rawStock.remaining;
+
                           return (
                             <div key={idx} className="flex items-center justify-between text-xs bg-white p-2 rounded-xl border border-slate-200/80">
                               <span className="font-semibold text-slate-700 truncate mr-2">
@@ -1355,7 +2020,7 @@ export default function InventoryDesk({
                                 <span className="font-bold text-indigo-600 font-mono">
                                   {item.quantityPerPackage} {item.unit}
                                 </span>
-                                <span className="text-[9.5px] text-slate-400 block font-mono">
+                                <span className={`text-[9.5px] block font-mono ${rawAvail === 0 ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
                                   স্টকে: {rawAvail} {item.unit}
                                 </span>
                               </div>
@@ -1368,8 +2033,10 @@ export default function InventoryDesk({
                     {/* Assembly Stock Metrics */}
                     <div className="grid grid-cols-3 gap-2.5 mb-4 text-center">
                       <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-2.5">
-                        <span className="text-[9.5px] font-bold text-amber-800 uppercase block tracking-wider">প্রস্তুতকৃত প্যাক</span>
-                        <span className="text-lg font-black text-amber-700 font-mono">{pkg.assembledQuantity}</span>
+                        <span className="text-[9.5px] font-bold text-amber-800 uppercase block tracking-wider">
+                          {selectedWarehouse === 'ALL' ? 'মোট প্রস্তুত প্যাক' : `${selectedWarehouse} এ প্রস্তুত`}
+                        </span>
+                        <span className="text-lg font-black text-amber-700 font-mono">{pkgAssembledInView}</span>
                       </div>
                       <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl p-2.5">
                         <span className="text-[9.5px] font-bold text-blue-800 uppercase block tracking-wider">বিতরণকৃত</span>
@@ -1385,7 +2052,11 @@ export default function InventoryDesk({
                     <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-3 mb-4 flex items-start gap-2.5 text-xs text-amber-950">
                       <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div className="leading-relaxed">
-                        <span>গুদামে অবশিষ্ট মালামাল দিয়ে সর্বোচ্চ আরও </span>
+                        <span>
+                          {selectedWarehouse === 'ALL'
+                            ? 'গুদামগুলোতে বিদ্যমান কাঁচামাল দিয়ে আরও সর্বোচ্চ '
+                            : `"${selectedWarehouse}" গুদামে বিদ্যমান কাঁচামাল দিয়ে আরও সর্বোচ্চ `}
+                        </span>
                         <strong className="text-amber-700 font-mono text-sm">{maxUnits}</strong>
                         <span> টি প্যাকেজ প্রস্তুত করা সম্ভব।</span>
                         {bottleneckItem && (
@@ -1402,6 +2073,7 @@ export default function InventoryDesk({
                         <button
                           onClick={() => {
                             setSelectedPackageForAssembly(pkg);
+                            setAssembleWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
                             setAssembleCount(maxUnits > 0 ? Math.min(10, maxUnits) : 0);
                             setIsAssembleModalOpen(true);
                           }}
@@ -1409,19 +2081,21 @@ export default function InventoryDesk({
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:cursor-not-allowed shadow-sm"
                         >
                           <Plus className="w-4 h-4" />
-                          <span>প্যাকেজ অ্যাসেম্বল করুন</span>
+                          <span>
+                            {selectedWarehouse !== 'ALL' ? `প্যাকেজ অ্যাসেম্বল (${selectedWarehouse})` : 'প্যাকেজ অ্যাসেম্বল করুন'}
+                          </span>
                         </button>
                       )}
 
-                      {canDisassemble && pkg.assembledQuantity > 0 && (
+                      {canDisassemble && pkgAssembledInView > 0 && (
                         <button
                           onClick={() => {
                             setSelectedPackageForDisassemble(pkg);
-                            setDisassembleCount(Math.min(5, pkgAvailable));
+                            setDisassembleWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+                            setDisassembleCount(Math.min(5, pkgAssembledInView));
                             setIsDisassembleModalOpen(true);
                           }}
-                          disabled={pkgAvailable === 0}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 px-3 rounded-xl flex items-center gap-1 transition cursor-pointer disabled:opacity-40"
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 px-3 rounded-xl flex items-center gap-1 transition cursor-pointer shadow-2xs"
                           title="অ-বিতরণকৃত প্যাকেজ ভেঙে আবার স্টোরে মালামাল ফেরত নিন"
                         >
                           <Minus className="w-3.5 h-3.5" />
@@ -1442,20 +2116,40 @@ export default function InventoryDesk({
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
           <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
             <div>
-              <h3 className="text-sm font-bold text-slate-800">
-                গুদামে প্রাপ্ত কাঁচামাল ও সামগ্রীর ইনভেন্টরি
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                কোন পণ্য কত পরিমাণ এসেছে, প্যাকেজে কতটুকু বরাদ্দ হয়েছে এবং অবশিষ্ট পরিমাণ।
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-slate-800">
+                  গুদামে প্রাপ্ত কাঁচামাল ও সামগ্রীর ইনভেন্টরি
+                </h3>
+                {selectedWarehouse !== 'ALL' ? (
+                  <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[10.5px] font-bold flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-amber-700" />
+                    <span>সক্রিয় গুদাম: {selectedWarehouse}</span>
+                  </span>
+                ) : (
+                  <span className="bg-slate-100 text-slate-700 border border-slate-200 px-2 py-0.5 rounded-full text-[10.5px] font-bold">
+                    সকল গুদাম সমন্বিত হিসাব
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                {selectedWarehouse !== 'ALL'
+                  ? `শুধুমাত্র "${selectedWarehouse}" গুদামে এই পণ্যের প্রাপ্তি, ব্যবহৃত ও অবশিষ্ট স্টক। মালামাল না থাকলে [+১], [কাস্টম] দিয়ে এই গুদামে স্টক যোগ করুন।`
+                  : 'সকল গুদামের সম্মিলিত প্রাপ্তি, প্যাকেজে ব্যবহৃত এবং অবশিষ্ট মালামাল। নির্দিষ্ট গুদামে কাজ করতে উপরে গুদাম নির্বাচন করুন।'}
               </p>
             </div>
+
             {canAddItems && (
               <button
-                onClick={() => setIsAddItemModalOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer self-start sm:self-auto"
+                onClick={() => {
+                  setAddItemWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+                  setAddItemMode('new');
+                  setSelectedCatalogItemId('');
+                  setIsAddItemModalOpen(true);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer self-start sm:self-auto transition"
               >
                 <Plus className="w-4 h-4" />
-                <span>নতুন আইটেম যোগ</span>
+                <span>নতুন পণ্য/স্টক যোগ</span>
               </button>
             )}
           </div>
@@ -1465,8 +2159,11 @@ export default function InventoryDesk({
               <p className="text-xs text-slate-400 mb-3">এই প্রোগ্রামে এখনো কোনো পণ্য এন্ট্রি করা হয়নি।</p>
               {canAddItems && (
                 <button
-                  onClick={() => setIsAddItemModalOpen(true)}
-                  className="bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl"
+                  onClick={() => {
+                    setAddItemWarehouse(selectedWarehouse !== 'ALL' ? selectedWarehouse : programWarehouses[0]);
+                    setIsAddItemModalOpen(true);
+                  }}
+                  className="bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl cursor-pointer"
                 >
                   পণ্য এন্ট্রি করুন
                 </button>
@@ -1477,8 +2174,10 @@ export default function InventoryDesk({
               {/* MOBILE & TABLET RESPONSIVE CARDS (ZERO HORIZONTAL SCROLL) */}
               <div className="block lg:hidden divide-y divide-slate-100">
                 {currentItems.map(item => {
-                  const remainingInStore = Math.max(0, item.totalReceived - item.allocatedToPackages);
-                  const isFullyAllocated = remainingInStore === 0;
+                  const effStock = getItemEffectiveStock(item, selectedWarehouse);
+                  const isStockZero = effStock.totalReceived === 0;
+                  const remainingInStore = effStock.remaining;
+                  const isFullyAllocated = effStock.totalReceived > 0 && remainingInStore === 0;
                   const isLowStock = remainingInStore > 0 && remainingInStore < 50;
 
                   return (
@@ -1486,7 +2185,15 @@ export default function InventoryDesk({
                       {/* Top Row: Title, Category & Status */}
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h4 className="font-bold text-slate-800 text-sm">{item.name}</h4>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="font-bold text-slate-800 text-sm">{item.name}</h4>
+                            {selectedWarehouse !== 'ALL' && (
+                              <span className="text-[9.5px] bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.2 rounded font-mono font-bold">
+                                📍 {selectedWarehouse}
+                              </span>
+                            )}
+                          </div>
+
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <span className="text-[10px] text-slate-400 font-mono bg-slate-100 px-1.5 py-0.5 rounded">
                               {item.id}
@@ -1504,7 +2211,11 @@ export default function InventoryDesk({
 
                         {/* Status Badge */}
                         <div className="shrink-0">
-                          {isFullyAllocated ? (
+                          {isStockZero ? (
+                            <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-1 rounded-full">
+                              ০ স্টক
+                            </span>
+                          ) : isFullyAllocated ? (
                             <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-2 py-1 rounded-full">
                               ১০০% বরাদ্দ
                             </span>
@@ -1520,6 +2231,18 @@ export default function InventoryDesk({
                         </div>
                       </div>
 
+                      {/* Per-warehouse breakdown tags if viewed in ALL mode */}
+                      {selectedWarehouse === 'ALL' && (
+                        <div className="flex items-center gap-1 flex-wrap text-[10px] bg-slate-50 p-2 rounded-xl border border-slate-100">
+                          <span className="text-slate-400 font-bold">গুদামভিত্তিক:</span>
+                          {programWarehouses.map(wh => (
+                            <span key={wh} className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-700 font-mono">
+                              📍 {wh}: <strong>{getItemWarehouseStock(item, wh).totalReceived}</strong>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Notes if available */}
                       {item.notes && (
                         <p className="text-[11px] text-slate-500 italic bg-slate-50 p-2 rounded-xl border border-slate-100">
@@ -1530,13 +2253,15 @@ export default function InventoryDesk({
                       {/* 3 Metric Summary Boxes */}
                       <div className="grid grid-cols-3 gap-2 text-center">
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
-                          <span className="text-[9.5px] font-bold text-slate-400 uppercase block">মোট প্রাপ্ত</span>
-                          <span className="text-base font-black text-slate-800 font-mono">{item.totalReceived}</span>
+                          <span className="text-[9.5px] font-bold text-slate-400 uppercase block">
+                            {selectedWarehouse !== 'ALL' ? 'এই গুদামে প্রাপ্ত' : 'মোট প্রাপ্ত'}
+                          </span>
+                          <span className="text-base font-black text-slate-800 font-mono">{effStock.totalReceived}</span>
                           <span className="text-[9px] text-slate-400 block font-mono">{item.unit}</span>
                         </div>
                         <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-2">
                           <span className="text-[9.5px] font-bold text-amber-700 uppercase block">প্যাকেজে বরাদ্দ</span>
-                          <span className="text-base font-black text-amber-700 font-mono">{item.allocatedToPackages}</span>
+                          <span className="text-base font-black text-amber-700 font-mono">{effStock.allocatedToPackages}</span>
                           <span className="text-[9px] text-amber-600/70 block font-mono">{item.unit}</span>
                         </div>
                         <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-xl p-2">
@@ -1546,31 +2271,31 @@ export default function InventoryDesk({
                         </div>
                       </div>
 
-                      {/* Control Buttons (1-Click Increments & Custom Adjustment) */}
+                      {/* Control Buttons (1-Click Increments, Custom Adjustment, Edit & Delete) */}
                       {canAddItems && (
                         <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
-                          {/* Quick 1-click counter */}
+                          {/* Quick 1-click counter box */}
                           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                             <button
-                              onClick={() => handleQuickDecrement(item.id)}
+                              onClick={() => handleQuickDecrement(item.id, selectedWarehouse !== 'ALL' ? selectedWarehouse : undefined)}
                               disabled={remainingInStore <= 0}
                               className="w-8 h-8 rounded-lg bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-slate-700 border border-slate-200 flex items-center justify-center font-bold text-sm shadow-xs cursor-pointer transition active:scale-95"
-                              title="১ টি কমান (-১)"
+                              title={`১ টি কমান (-১) ${selectedWarehouse !== 'ALL' ? `[${selectedWarehouse}]` : ''}`}
                             >
                               <Minus className="w-4 h-4" />
                             </button>
                             <div className="px-2.5 text-center">
                               <span className="text-xs font-black font-mono text-slate-800 block leading-tight">
-                                {item.totalReceived}
+                                {effStock.totalReceived}
                               </span>
                               <span className="text-[8.5px] text-slate-400 uppercase font-mono block">
                                 পরিমাণ
                               </span>
                             </div>
                             <button
-                              onClick={() => handleQuickIncrement(item.id)}
+                              onClick={() => handleQuickIncrement(item.id, selectedWarehouse !== 'ALL' ? selectedWarehouse : undefined)}
                               className="w-8 h-8 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 flex items-center justify-center font-bold text-sm shadow-xs cursor-pointer transition active:scale-95"
-                              title="১ টি বাড়ান (+১)"
+                              title={`১ টি বাড়ান (+১) ${selectedWarehouse !== 'ALL' ? `[${selectedWarehouse}]` : ''}`}
                             >
                               <Plus className="w-4 h-4" />
                             </button>
@@ -1583,14 +2308,14 @@ export default function InventoryDesk({
                             title="কাস্টম সংখ্যা যোগ বা বাদ দিন (যেমন ৫০০ বা ৬০০ পিস)"
                           >
                             <SlidersHorizontal className="w-3.5 h-3.5" />
-                            <span>কাস্টম সমন্বয় (+/-)</span>
+                            <span>কাস্টম (+/-)</span>
                           </button>
 
                           {/* Edit Item Button */}
                           <button
                             onClick={() => handleOpenEditItemModal(item)}
                             className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl transition cursor-pointer"
-                            title="আইটেমের তথ্য এডিট করুন"
+                            title="আইটেমের তথ্য ও গুদাম স্টক এডিট করুন"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -1610,15 +2335,17 @@ export default function InventoryDesk({
                 })}
               </div>
 
-              {/* DESKTOP TABLE VIEW (CLEAN FULL-WIDTH, NO OVERFLOW) */}
+              {/* DESKTOP TABLE VIEW (CLEAN FULL-WIDTH, NO HORIZONTAL OVERFLOW) */}
               <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-100/70 border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
                       <th className="py-3 px-4">আইটেমের নাম ও ক্যাটাগরি</th>
                       <th className="py-3 px-4 text-center">একক (Unit)</th>
-                      <th className="py-3 px-4 text-right">মোট প্রাপ্ত</th>
-                      <th className="py-3 px-4 text-right">প্যাকেজে বরাদ্দকৃত</th>
+                      <th className="py-3 px-4 text-right">
+                        {selectedWarehouse !== 'ALL' ? `প্রাপ্ত (${selectedWarehouse})` : 'মোট প্রাপ্ত'}
+                      </th>
+                      <th className="py-3 px-4 text-right">প্যাকেজে বরাদ্দ</th>
                       <th className="py-3 px-4 text-right">গুদামে অবশিষ্ট</th>
                       <th className="py-3 px-4 text-center">স্ট্যাটাস</th>
                       <th className="py-3 px-4 text-center">স্টক সমন্বয় ও অ্যাকশন</th>
@@ -1626,24 +2353,38 @@ export default function InventoryDesk({
                   </thead>
                   <tbody className="divide-y divide-slate-150 text-xs">
                     {currentItems.map(item => {
-                      const remainingInStore = Math.max(0, item.totalReceived - item.allocatedToPackages);
-                      const isFullyAllocated = remainingInStore === 0;
+                      const effStock = getItemEffectiveStock(item, selectedWarehouse);
+                      const isStockZero = effStock.totalReceived === 0;
+                      const remainingInStore = effStock.remaining;
+                      const isFullyAllocated = effStock.totalReceived > 0 && remainingInStore === 0;
                       const isLowStock = remainingInStore > 0 && remainingInStore < 50;
 
                       return (
                         <tr key={item.id} className="hover:bg-slate-50/80 transition">
                           <td className="py-3 px-4">
-                            <div className="font-bold text-slate-800">{item.name}</div>
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">{item.name}</span>
+                              {selectedWarehouse !== 'ALL' && (
+                                <span className="text-[9px] bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.2 rounded font-mono font-bold">
+                                  📍 {selectedWarehouse}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <span className="text-[10px] text-slate-400 font-mono">{item.id}</span>
                               {item.category && (
                                 <span className="text-[9.5px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
                                   {item.category}
                                 </span>
                               )}
+                              {selectedWarehouse === 'ALL' && (
+                                <span className="text-[9.5px] text-slate-500 font-mono">
+                                  ({programWarehouses.map(wh => `${wh}: ${getItemWarehouseStock(item, wh).totalReceived}`).join(' | ')})
+                                </span>
+                              )}
                               {item.notes && (
                                 <span className="text-[10px] text-slate-400 italic">
-                                  ({item.notes})
+                                  💬 {item.notes}
                                 </span>
                               )}
                             </div>
@@ -1652,16 +2393,20 @@ export default function InventoryDesk({
                             {item.unit}
                           </td>
                           <td className="py-3 px-4 text-right font-black text-slate-800 font-mono text-sm">
-                            {item.totalReceived}
+                            {effStock.totalReceived}
                           </td>
                           <td className="py-3 px-4 text-right font-bold text-amber-700 font-mono">
-                            {item.allocatedToPackages}
+                            {effStock.allocatedToPackages}
                           </td>
                           <td className="py-3 px-4 text-right font-black text-emerald-700 font-mono text-sm">
                             {remainingInStore}
                           </td>
                           <td className="py-3 px-4 text-center">
-                            {isFullyAllocated ? (
+                            {isStockZero ? (
+                              <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                ০ স্টক
+                              </span>
+                            ) : isFullyAllocated ? (
                               <span className="bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
                                 ১০০% বরাদ্দ
                               </span>
@@ -1682,20 +2427,20 @@ export default function InventoryDesk({
                                   {/* Quick 1-click counter box [-] count [+] */}
                                   <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200 shadow-2xs">
                                     <button
-                                      onClick={() => handleQuickDecrement(item.id)}
+                                      onClick={() => handleQuickDecrement(item.id, selectedWarehouse !== 'ALL' ? selectedWarehouse : undefined)}
                                       disabled={remainingInStore <= 0}
                                       className="w-6 h-6 rounded bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-600 disabled:opacity-30 disabled:hover:bg-white disabled:hover:text-slate-700 flex items-center justify-center text-xs font-bold transition active:scale-95 cursor-pointer"
-                                      title="১ টি কমান (-১)"
+                                      title={`১ টি কমান (-১) ${selectedWarehouse !== 'ALL' ? `[${selectedWarehouse}]` : ''}`}
                                     >
                                       <Minus className="w-3 h-3" />
                                     </button>
                                     <span className="px-2 font-mono font-bold text-xs text-slate-800" title="বর্তমান স্টক">
-                                      {item.totalReceived}
+                                      {effStock.totalReceived}
                                     </span>
                                     <button
-                                      onClick={() => handleQuickIncrement(item.id)}
+                                      onClick={() => handleQuickIncrement(item.id, selectedWarehouse !== 'ALL' ? selectedWarehouse : undefined)}
                                       className="w-6 h-6 rounded bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center justify-center text-xs font-bold transition active:scale-95 cursor-pointer"
-                                      title="১ টি বাড়ান (+১)"
+                                      title={`১ টি বাড়ান (+১) ${selectedWarehouse !== 'ALL' ? `[${selectedWarehouse}]` : ''}`}
                                     >
                                       <Plus className="w-3 h-3" />
                                     </button>
@@ -1715,7 +2460,7 @@ export default function InventoryDesk({
                                   <button
                                     onClick={() => handleOpenEditItemModal(item)}
                                     className="p-1.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 bg-indigo-50/40 rounded-lg transition cursor-pointer"
-                                    title="তথ্য এডিট করুন"
+                                    title="তথ্য ও গুদাম স্টক এডিট করুন"
                                   >
                                     <Edit3 className="w-3.5 h-3.5" />
                                   </button>
@@ -1745,9 +2490,132 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* TAB 3: STOCK AUDIT & DISTRIBUTION LEDGER */}
+      {/* TAB 3: STOCK AUDIT & MULTI-WAREHOUSE LEDGER */}
       {activeTab === 'audit' && activeProgram && (
         <div className="space-y-6">
+          {/* Multi-Warehouse Comparative Audit Table */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 mb-4 gap-3">
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-amber-600" />
+                  <span>গুদামভিত্তিক তুলনামূলক অডিট ও হিসাব (Multi-Warehouse Breakdown)</span>
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  ময়মনসিংহ, কক্সবাজার, খুলনা সহ সকল ডিপোর মালামাল ও প্যাকেজিং এর বিস্তারিত লাইভ তুলনা।
+                </p>
+              </div>
+
+              {canManageInventory && (
+                <button
+                  onClick={() => setIsAddWarehouseModalOpen(true)}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition self-start sm:self-auto"
+                >
+                  <Plus className="w-3.5 h-3.5 text-amber-700" />
+                  <span>+ নতুন গুদাম যোগ</span>
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/70 border-b border-slate-200 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">গুদামের নাম (Warehouse)</th>
+                    <th className="py-3 px-4 text-center">পণ্য ভ্যারাইটি</th>
+                    <th className="py-3 px-4 text-right">মোট প্রাপ্ত কাঁচামাল</th>
+                    <th className="py-3 px-4 text-right">প্যাকেজে বরাদ্দ</th>
+                    <th className="py-3 px-4 text-right">গুদামে অবশিষ্ট মালামাল</th>
+                    <th className="py-3 px-4 text-right">প্রস্তুতকৃত প্যাকেজ</th>
+                    <th className="py-3 px-4 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-150">
+                  {programWarehouses.map(wh => {
+                    const whItemCount = currentItems.filter(i => getItemWarehouseStock(i, wh).totalReceived > 0).length;
+                    const whTotalRec = currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, wh).totalReceived, 0);
+                    const whAlloc = currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, wh).allocatedToPackages, 0);
+                    const whRem = currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, wh).remaining, 0);
+                    const whAssembled = currentPackages.reduce((sum, p) => sum + getPackageWarehouseAssembled(p, wh), 0);
+                    const isSelected = selectedWarehouse === wh;
+
+                    return (
+                      <tr key={wh} className={`hover:bg-slate-50 transition ${isSelected ? 'bg-amber-50/50' : ''}`}>
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{wh}</span>
+                            {isSelected && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded-full">
+                                সক্রিয়
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-mono font-semibold text-slate-700">
+                          {whItemCount} / {currentItems.length}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800">
+                          {whTotalRec}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-700">
+                          {whAlloc}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-700">
+                          {whRem}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-black text-amber-600">
+                          {whAssembled} প্যাক
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <button
+                            onClick={() => {
+                              setSelectedWarehouse(wh);
+                              setActiveTab('items');
+                            }}
+                            className="px-2.5 py-1 bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 border border-slate-200 rounded-lg text-[11px] font-bold transition cursor-pointer"
+                          >
+                            গুদামে যান &rarr;
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-slate-100/90 font-black text-slate-900 border-t-2 border-slate-300">
+                    <td className="py-3.5 px-4">সর্বমোট (সকল গুদাম সমন্বিত)</td>
+                    <td className="py-3.5 px-4 text-center font-mono">{currentItems.length} টি</td>
+                    <td className="py-3.5 px-4 text-right font-mono">
+                      {currentItems.reduce((sum, i) => sum + i.totalReceived, 0)}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-mono text-amber-700">
+                      {currentItems.reduce((sum, i) => sum + i.allocatedToPackages, 0)}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-mono text-emerald-700">
+                      {currentItems.reduce((sum, i) => sum + Math.max(0, i.totalReceived - i.allocatedToPackages), 0)}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-mono text-amber-600">
+                      {totalAssembled} প্যাক
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        onClick={() => {
+                          setSelectedWarehouse('ALL');
+                          setActiveTab('items');
+                        }}
+                        className="text-[11px] font-bold text-indigo-700 hover:underline cursor-pointer"
+                      >
+                        সকল গুদাম
+                      </button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          {/* Existing 3-step Ledger Summary */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
             <h3 className="text-sm font-bold text-slate-800 mb-1">
               {activeProgram.name} — সম্পূর্ণ স্টক অডিট ও লেজার
@@ -1808,7 +2676,7 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* MODAL 1: ADD NEW RAW ITEM */}
+      {/* MODAL 1: ADD NEW RAW ITEM (WITH CATALOG PICK & WAREHOUSE SELECT) */}
       {isAddItemModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
@@ -1817,7 +2685,10 @@ export default function InventoryDesk({
                 <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
                   <Plus className="w-4 h-4" />
                 </div>
-                <h3 className="text-sm font-bold text-slate-800">নতুন পণ্য/মালামাল যোগ করুন</h3>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">পণ্য ও স্টক যোগ করুন</h3>
+                  <span className="text-[10px] text-slate-400 font-mono">{activeProgram?.name}</span>
+                </div>
               </div>
               <button onClick={() => setIsAddItemModalOpen(false)} className="text-slate-400 hover:text-slate-700 p-1">
                 <X className="w-5 h-5" />
@@ -1825,55 +2696,146 @@ export default function InventoryDesk({
             </div>
 
             <form onSubmit={handleAddNewItem} className="space-y-4 text-xs">
+              {/* Warehouse Location Selector */}
               <div>
-                <label className="font-bold text-slate-700 block mb-1">পণ্যের নাম (Item Name) *</label>
-                <input
-                  type="text"
-                  required
-                  value={newItemName}
-                  onChange={(e) => setNewItemName(e.target.value)}
-                  placeholder="যেমন: উইন্টার ব্লাঙ্কেট, জ্যাকেট, চাল, চিনি, সয়াবিন তেল..."
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
-                />
+                <label className="font-bold text-slate-700 block mb-1">
+                  কোন গুদামে মালামাল আসছে? (Target Warehouse) *
+                </label>
+                <select
+                  value={addItemWarehouse}
+                  onChange={(e) => setAddItemWarehouse(e.target.value)}
+                  className="w-full bg-amber-50/70 border border-amber-300 rounded-xl p-2.5 font-bold text-amber-950 focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  {programWarehouses.map(wh => (
+                    <option key={wh} value={wh}>
+                      📍 {wh} গুদাম
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10.5px] text-slate-500 mt-1">
+                  এই পরিমাণটি শুধুমাত্র নির্বাচিত গুদামের স্টকে যুক্ত হবে।
+                </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Mode Toggle: Create New vs Pick Existing Catalog Item */}
+              {currentItems.length > 0 && (
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি</label>
-                  <select
-                    value={newItemCategory}
-                    onChange={(e) => setNewItemCategory(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="শীতবস্ত্র">শীতবস্ত্র</option>
-                    <option value="খাদ্যপণ্য">খাদ্যপণ্য</option>
-                    <option value="শিশুপণ্য">শিশুপণ্য</option>
-                    <option value="হাইজিন সামগ্রী">হাইজিন সামগ্রী</option>
-                    <option value="মেডিকেল সামগ্রী">মেডিকেল সামগ্রী</option>
-                    <option value="সাধারণ সামগ্রী">সাধারণ সামগ্রী</option>
-                  </select>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    পণ্য নির্বাচনের ধরন:
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddItemMode('new')}
+                      className={`py-2 px-3 rounded-xl font-bold border transition cursor-pointer text-center ${
+                        addItemMode === 'new'
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      + নতুন পণ্য তৈরি
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddItemMode('catalog');
+                        if (!selectedCatalogItemId && currentItems.length > 0) {
+                          setSelectedCatalogItemId(currentItems[0].id);
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-xl font-bold border transition cursor-pointer text-center ${
+                        addItemMode === 'catalog'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      বিদ্যমান ক্যাটালগ থেকে যোগ
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">পরিমাপের একক (Unit)</label>
-                  <select
-                    value={newItemUnit}
-                    onChange={(e) => setNewItemUnit(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="পিস (Pcs)">পিস (Pcs)</option>
-                    <option value="কেজি (Kg)">কেজি (Kg)</option>
-                    <option value="লিটার (Liter)">লিটার (Liter)</option>
-                    <option value="প্যাকেট (Pkt)">প্যাকেট (Pkt)</option>
-                    <option value="জোড়া (Pair)">জোড়া (Pair)</option>
-                    <option value="সেট (Set)">সেট (Set)</option>
-                    <option value="বস্তা (Bag)">বস্তা (Bag)</option>
-                  </select>
+              {/* If Catalog Mode */}
+              {addItemMode === 'catalog' && (
+                <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      বিদ্যমান ক্যাটালগ থেকে পণ্য নির্বাচন করুন *
+                    </label>
+                    <select
+                      value={selectedCatalogItemId}
+                      onChange={(e) => setSelectedCatalogItemId(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-xl p-2.5 font-bold text-slate-800 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                    >
+                      {currentItems.map(item => {
+                        const curWhStock = getItemWarehouseStock(item, addItemWarehouse);
+                        return (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.unit}) — এই গুদামে বর্তমান: {curWhStock.totalReceived}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* If New Item Mode */}
+              {addItemMode === 'new' && (
+                <>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">পণ্যের নাম (Item Name) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={newItemName}
+                      onChange={(e) => setNewItemName(e.target.value)}
+                      placeholder="যেমন: উইন্টার ব্লাঙ্কেট, জ্যাকেট, চাল, চিনি, সয়াবিন তেল..."
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">ক্যাটাগরি</label>
+                      <select
+                        value={newItemCategory}
+                        onChange={(e) => setNewItemCategory(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="শীতবস্ত্র">শীতবস্ত্র</option>
+                        <option value="খাদ্যপণ্য">খাদ্যপণ্য</option>
+                        <option value="শিশুপণ্য">শিশুপণ্য</option>
+                        <option value="হাইজিন সামগ্রী">হাইজিন সামগ্রী</option>
+                        <option value="মেডিকেল সামগ্রী">মেডিকেল সামগ্রী</option>
+                        <option value="সাধারণ সামগ্রী">সাধারণ সামগ্রী</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">পরিমাপের একক (Unit)</label>
+                      <select
+                        value={newItemUnit}
+                        onChange={(e) => setNewItemUnit(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                      >
+                        <option value="পিস (Pcs)">পিস (Pcs)</option>
+                        <option value="কেজি (Kg)">কেজি (Kg)</option>
+                        <option value="লিটার (Liter)">লিটার (Liter)</option>
+                        <option value="প্যাকেট (Pkt)">প্যাকেট (Pkt)</option>
+                        <option value="জোড়া (Pair)">জোড়া (Pair)</option>
+                        <option value="সেট (Set)">সেট (Set)</option>
+                        <option value="বস্তা (Bag)">বস্তা (Bag)</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">মোট প্রাপ্ত মালামাল (Total Received Quantity) *</label>
+                <label className="font-bold text-slate-700 block mb-1">
+                  এই গুদামে কতটুকু প্রাপ্ত হয়েছে? (Received Quantity for {addItemWarehouse}) *
+                </label>
                 <input
                   type="number"
                   required
@@ -1885,16 +2847,18 @@ export default function InventoryDesk({
                 />
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">অতিরিক্ত বিবরণ বা নোট</label>
-                <input
-                  type="text"
-                  value={newItemNotes}
-                  onChange={(e) => setNewItemNotes(e.target.value)}
-                  placeholder="যেমন: তুর্কি ফ্লিস, কোয়ালিটি গ্রেড ১..."
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
+              {addItemMode === 'new' && (
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">অতিরিক্ত বিবরণ বা নোট</label>
+                  <input
+                    type="text"
+                    value={newItemNotes}
+                    onChange={(e) => setNewItemNotes(e.target.value)}
+                    placeholder="যেমন: তুর্কি ফ্লিস, কোয়ালিটি গ্রেড ১..."
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              )}
 
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
@@ -1906,9 +2870,9 @@ export default function InventoryDesk({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer shadow-sm"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer shadow-sm transition"
                 >
-                  সংরক্ষণ করুন
+                  {addItemMode === 'catalog' ? 'স্টক যুক্ত করুন' : 'পণ্য তৈরি ও সেভ'}
                 </button>
               </div>
             </form>
@@ -1941,26 +2905,49 @@ export default function InventoryDesk({
             </div>
 
             <form onSubmit={handleCustomStockAdjustment} className="space-y-4 text-xs">
-              {/* Current Status Card */}
-              <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-center">
-                <div>
-                  <span className="text-[9.5px] text-slate-400 font-bold block uppercase">বর্তমান মোট</span>
-                  <span className="text-sm font-black text-slate-800 font-mono">{selectedItemForAdjustment.totalReceived}</span>
-                  <span className="text-[9px] text-slate-400 block font-mono">{selectedItemForAdjustment.unit}</span>
-                </div>
-                <div>
-                  <span className="text-[9.5px] text-amber-700 font-bold block uppercase">প্যাকেজে বরাদ্দ</span>
-                  <span className="text-sm font-black text-amber-700 font-mono">{selectedItemForAdjustment.allocatedToPackages}</span>
-                  <span className="text-[9px] text-amber-600 block font-mono">{selectedItemForAdjustment.unit}</span>
-                </div>
-                <div>
-                  <span className="text-[9.5px] text-emerald-700 font-bold block uppercase">গুদামে অবশিষ্ট</span>
-                  <span className="text-sm font-black text-emerald-700 font-mono">
-                    {Math.max(0, selectedItemForAdjustment.totalReceived - selectedItemForAdjustment.allocatedToPackages)}
-                  </span>
-                  <span className="text-[9px] text-emerald-600 block font-mono">{selectedItemForAdjustment.unit}</span>
-                </div>
+              {/* Target Warehouse Selector */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  কোন গুদামে স্টক পরিবর্তন করবেন? (Target Warehouse) *
+                </label>
+                <select
+                  value={adjustmentWarehouse}
+                  onChange={(e) => setAdjustmentWarehouse(e.target.value)}
+                  className="w-full bg-amber-50/70 border border-amber-300 rounded-xl p-2.5 font-bold text-amber-950 focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  {programWarehouses.map(wh => (
+                    <option key={wh} value={wh}>
+                      📍 {wh} গুদাম
+                    </option>
+                  ))}
+                </select>
               </div>
+
+              {/* Current Status Card for Target Warehouse */}
+              {(() => {
+                const whStock = getItemWarehouseStock(selectedItemForAdjustment, adjustmentWarehouse || programWarehouses[0]);
+                return (
+                  <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-center">
+                    <div>
+                      <span className="text-[9.5px] text-slate-400 font-bold block uppercase">
+                        [{adjustmentWarehouse}] প্রাপ্ত
+                      </span>
+                      <span className="text-sm font-black text-slate-800 font-mono">{whStock.totalReceived}</span>
+                      <span className="text-[9px] text-slate-400 block font-mono">{selectedItemForAdjustment.unit}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] text-amber-700 font-bold block uppercase">প্যাকেজে বরাদ্দ</span>
+                      <span className="text-sm font-black text-amber-700 font-mono">{whStock.allocatedToPackages}</span>
+                      <span className="text-[9px] text-amber-600 block font-mono">{selectedItemForAdjustment.unit}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] text-emerald-700 font-bold block uppercase">গুদামে অবশিষ্ট</span>
+                      <span className="text-sm font-black text-emerald-700 font-mono">{whStock.remaining}</span>
+                      <span className="text-[9px] text-emerald-600 block font-mono">{selectedItemForAdjustment.unit}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Mode Toggle: Add (+) vs Deduct (-) */}
               <div>
@@ -2028,7 +3015,6 @@ export default function InventoryDesk({
                   type="number"
                   required
                   min="1"
-                  max={adjustmentType === 'deduct' ? Math.max(0, selectedItemForAdjustment.totalReceived - selectedItemForAdjustment.allocatedToPackages) : undefined}
                   value={adjustmentQuantity}
                   onChange={(e) => setAdjustmentQuantity(Math.max(1, Number(e.target.value)))}
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-lg font-black font-mono text-slate-800 focus:outline-none focus:border-emerald-500"
@@ -2045,40 +3031,10 @@ export default function InventoryDesk({
                   type="text"
                   value={adjustmentNote}
                   onChange={(e) => setAdjustmentNote(e.target.value)}
-                  placeholder="যেমন: নতুন অনুদান চালান, ত্রুটি সংশোধন, বা ক্ষতিপূরণ..."
+                  placeholder="যেমন: নতুন চালান, ক্ষতিপূরণ বা স্থানান্তর..."
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
                 />
               </div>
-
-              {/* Live Preview Calculation */}
-              {(() => {
-                const qty = Number(adjustmentQuantity) || 0;
-                const newTotal = adjustmentType === 'add'
-                  ? selectedItemForAdjustment.totalReceived + qty
-                  : Math.max(selectedItemForAdjustment.allocatedToPackages, selectedItemForAdjustment.totalReceived - qty);
-                const newRemaining = Math.max(0, newTotal - selectedItemForAdjustment.allocatedToPackages);
-
-                return (
-                  <div className={`p-3 rounded-2xl border text-xs font-mono ${
-                    adjustmentType === 'add' ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950' : 'bg-rose-50/70 border-rose-200 text-rose-950'
-                  }`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span>পরিবর্তনের প্রভাব:</span>
-                      <strong className="text-sm">
-                        {adjustmentType === 'add' ? `+${qty}` : `-${qty}`} {selectedItemForAdjustment.unit}
-                      </strong>
-                    </div>
-                    <div className="flex justify-between items-center text-[11px] text-slate-600">
-                      <span>সমন্বয় পরবর্তী নতুন মোট স্টক:</span>
-                      <strong className="font-bold text-slate-800">{newTotal} {selectedItemForAdjustment.unit}</strong>
-                    </div>
-                    <div className="flex justify-between items-center text-[11px] text-slate-600 mt-0.5">
-                      <span>গুদামে নতুন অবশিষ্ট থাকবে:</span>
-                      <strong className="font-bold text-emerald-700">{newRemaining} {selectedItemForAdjustment.unit}</strong>
-                    </div>
-                  </div>
-                );
-              })()}
 
               <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
@@ -2105,17 +3061,17 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* MODAL 2.5: EDIT RAW ITEM */}
+      {/* MODAL 2.5: EDIT RAW ITEM (WITH PER-WAREHOUSE BREAKDOWN) */}
       {isEditItemModalOpen && selectedItemForEdit && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-up max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
                 <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider block font-mono">
                   EDIT INVENTORY ITEM
                 </span>
                 <h3 className="text-sm font-bold text-slate-800">
-                  আইটেমের তথ্য এডিট করুন: {selectedItemForEdit.name}
+                  আইটেমের তথ্য ও গুদাম স্টক এডিট: {selectedItemForEdit.name}
                 </h3>
               </div>
               <button 
@@ -2177,23 +3133,52 @@ export default function InventoryDesk({
                 </div>
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  মোট প্রাপ্ত স্টক (Total Received) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min={selectedItemForEdit.allocatedToPackages}
-                  value={editItemReceived}
-                  onChange={(e) => setEditItemReceived(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-black font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
-                />
-                {selectedItemForEdit.allocatedToPackages > 0 && (
-                  <p className="text-[11px] text-amber-700 mt-1">
-                    ⚠️ দ্রষ্টব্য: ইতোমধ্যে {selectedItemForEdit.allocatedToPackages} {selectedItemForEdit.unit} প্যাকেজে বরাদ্দ আছে। মোট প্রাপ্ত এর কম করা যাবে না।
-                  </p>
-                )}
+              {/* Per-Warehouse Stock Input Fields */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
+                <span className="font-bold text-slate-800 block text-[11px]">
+                  গুদামভিত্তিক প্রাপ্ত মালামাল বণ্টন ({editItemUnit}):
+                </span>
+                {programWarehouses.map(wh => {
+                  const allocInWh = getItemWarehouseStock(selectedItemForEdit, wh).allocatedToPackages;
+                  const currentVal = editItemWarehouseStocks[wh] ?? 0;
+
+                  return (
+                    <div key={wh} className="flex items-center justify-between gap-3 bg-white p-2 rounded-xl border border-slate-200">
+                      <div className="flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                        <span className="font-bold text-slate-700">{wh} গুদাম:</span>
+                        {allocInWh > 0 && (
+                          <span className="text-[10px] text-amber-700 font-mono">
+                            ({allocInWh} বরাদ্দ)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number"
+                          min={allocInWh}
+                          value={currentVal}
+                          onChange={(e) => {
+                            const val = Math.max(0, Number(e.target.value));
+                            setEditItemWarehouseStocks({
+                              ...editItemWarehouseStocks,
+                              [wh]: val
+                            });
+                          }}
+                          className="w-24 bg-slate-50 border border-slate-300 rounded-lg py-1 px-2 text-right font-black font-mono text-slate-800 text-xs focus:outline-none focus:border-indigo-500"
+                        />
+                        <span className="text-[10px] text-slate-500 font-mono">{editItemUnit}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="text-right text-[11px] font-bold text-slate-600 pt-1">
+                  মোট একত্রিত প্রাপ্ত স্টক:{' '}
+                  <span className="text-indigo-700 font-mono font-black text-xs">
+                    {Object.values(editItemWarehouseStocks).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0)} {editItemUnit}
+                  </span>
+                </div>
               </div>
 
               <div>
@@ -2230,67 +3215,15 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* MODAL 2.8: QUICK STOCK IN */}
-      {isStockInModalOpen && selectedItemForStockIn && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-              <h3 className="text-sm font-bold text-slate-800">
-                স্টক ইন: {selectedItemForStockIn.name}
-              </h3>
-              <button onClick={() => setIsStockInModalOpen(false)} className="text-slate-400 hover:text-slate-700 p-1">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-slate-600 space-y-1 font-mono">
-                <div>বর্তমান মোট প্রাপ্ত: <strong>{selectedItemForStockIn.totalReceived} {selectedItemForStockIn.unit}</strong></div>
-                <div>প্যাকেজে ব্যবহৃত: <strong>{selectedItemForStockIn.allocatedToPackages} {selectedItemForStockIn.unit}</strong></div>
-                <div className="text-emerald-700 font-bold">গুদামে অবশিষ্ট: <strong>{Math.max(0, selectedItemForStockIn.totalReceived - selectedItemForStockIn.allocatedToPackages)} {selectedItemForStockIn.unit}</strong></div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  নতুন চালানে কতটুকু মালামাল এসেছে? ({selectedItemForStockIn.unit}) *
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={stockInQuantity}
-                  onChange={(e) => setStockInQuantity(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-base font-bold font-mono text-slate-800 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsStockInModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="button"
-                  onClick={handleStockIn}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer shadow-sm"
-                >
-                  স্টক যোগ নিশ্চিত করুন
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: ASSEMBLE PACKAGES */}
+      {/* MODAL 3: ASSEMBLE PACKAGES (WITH WAREHOUSE SUPPORT) */}
       {isAssembleModalOpen && selectedPackageForAssembly && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
-                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Package Assembly Desk</span>
+                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block font-mono">
+                  Package Assembly Desk
+                </span>
                 <h3 className="text-sm font-bold text-slate-800">
                   প্যাকেজ প্রস্তুত করুন: {selectedPackageForAssembly.name}
                 </h3>
@@ -2300,18 +3233,39 @@ export default function InventoryDesk({
               </button>
             </div>
 
+            {/* Warehouse Selector for Assembly */}
+            <div className="mb-4 text-xs">
+              <label className="font-bold text-slate-700 block mb-1">
+                কোন গুদামে প্যাকেজ অ্যাসেম্বল ও প্যাকিং করবেন? *
+              </label>
+              <select
+                value={assembleWarehouse}
+                onChange={(e) => setAssembleWarehouse(e.target.value)}
+                className="w-full bg-amber-50/70 border border-amber-300 rounded-xl p-2.5 font-bold text-amber-950 focus:outline-none focus:border-amber-500 cursor-pointer"
+              >
+                {programWarehouses.map(wh => (
+                  <option key={wh} value={wh}>
+                    📍 {wh} গুদাম
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {(() => {
-              const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(selectedPackageForAssembly);
+              const currentWh = assembleWarehouse || programWarehouses[0];
+              const { maxUnits, bottleneckItem } = calculateMaxAssembleCapacity(selectedPackageForAssembly, currentWh);
               return (
                 <div className="space-y-4 text-xs">
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 leading-relaxed">
-                    গুদামে বিদ্যমান কাঁচামাল দিয়ে আপনি সর্বোচ্চ <strong className="font-mono text-sm text-amber-800">{maxUnits}</strong> টি প্যাকেজ তৈরি করতে পারবেন।
+                    <span>"{currentWh}" গুদামে বিদ্যমান কাঁচামাল দিয়ে আপনি সর্বোচ্চ </span>
+                    <strong className="font-mono text-sm text-amber-800">{maxUnits}</strong>
+                    <span> টি প্যাকেজ তৈরি করতে পারবেন।</span>
                     {bottleneckItem && <div className="text-[11px] text-slate-500 mt-0.5 font-medium">সীমাবদ্ধকারী আইটেম: {bottleneckItem}</div>}
                   </div>
 
                   <div>
                     <label className="font-bold text-slate-700 block mb-1">
-                      আপনি কয়টি প্যাকেজ প্রস্তুত করতে চান? (Number of Packages to Assemble) *
+                      আপনি কয়টি প্যাকেজ প্রস্তুত করতে চান? *
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -2332,16 +3286,18 @@ export default function InventoryDesk({
                     </div>
                   </div>
 
-                  {/* Deduction Preview */}
+                  {/* Deduction Preview from Selected Warehouse */}
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-                      এই অ্যাসেম্বলির ফলে গুদাম থেকে যে মালামাল কাটা যাবে:
+                      "{currentWh}" গুদাম থেকে যে মালামাল কাটা যাবে:
                     </span>
                     <div className="space-y-1.5 font-mono text-[11px]">
                       {selectedPackageForAssembly.items.map((req, idx) => {
                         const needed = req.quantityPerPackage * assembleCount;
                         const raw = currentItems.find(i => i.id === req.itemId);
-                        const available = raw ? Math.max(0, raw.totalReceived - raw.allocatedToPackages) : 0;
+                        const curWhStock = raw ? getItemWarehouseStock(raw, currentWh) : { remaining: 0 };
+                        const available = curWhStock.remaining;
+
                         return (
                           <div key={idx} className="flex justify-between items-center text-slate-700">
                             <span>• {req.itemName}:</span>
@@ -2378,13 +3334,15 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* MODAL 4: DISASSEMBLE / UNPACK */}
+      {/* MODAL 4: DISASSEMBLE / UNPACK (WITH WAREHOUSE SUPPORT) */}
       {isDisassembleModalOpen && selectedPackageForDisassemble && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
               <div>
-                <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Disassemble Packages</span>
+                <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">
+                  Disassemble Packages
+                </span>
                 <h3 className="text-sm font-bold text-slate-800">
                   প্যাকেজ ভেঙে মালামাল গুদামে ফেরত
                 </h3>
@@ -2395,38 +3353,347 @@ export default function InventoryDesk({
             </div>
 
             <div className="space-y-4 text-xs">
-              <p className="text-slate-600 leading-relaxed">
-                তৈরিকৃত কিন্তু এখনও অ-বিতরণকৃত প্যাকেজ ভেঙে এর ভেতরে থাকা সমস্ত পণ্য পুনরায় গুদামের কাঁচামাল স্টকে ফিরিয়ে আনা হবে।
-              </p>
-
               <div>
                 <label className="font-bold text-slate-700 block mb-1">
-                  কয়টি প্যাকেজ আনপ্যাক করবেন? *
+                  কোন গুদামের প্যাকেজ আনপ্যাক করবেন? *
+                </label>
+                <select
+                  value={disassembleWarehouse}
+                  onChange={(e) => setDisassembleWarehouse(e.target.value)}
+                  className="w-full bg-amber-50/70 border border-amber-300 rounded-xl p-2.5 font-bold text-amber-950 focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  {programWarehouses.map(wh => (
+                    <option key={wh} value={wh}>
+                      📍 {wh} গুদাম ({getPackageWarehouseAssembled(selectedPackageForDisassemble, wh)} টি প্রস্তুত)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {(() => {
+                const targetWh = disassembleWarehouse || programWarehouses[0];
+                const maxAvailableInWh = getPackageWarehouseAssembled(selectedPackageForDisassemble, targetWh);
+
+                return (
+                  <>
+                    <p className="text-slate-600 leading-relaxed">
+                      "{targetWh}" গুদামে তৈরিকৃত প্যাকেজ ভেঙে এর ভেতরে থাকা সমস্ত পণ্য পুনরায় ওই গুদামের কাঁচামাল স্টকে ফিরিয়ে আনা হবে।
+                    </p>
+
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        কয়টি প্যাকেজ আনপ্যাক করবেন? (সর্বোচ্চ {maxAvailableInWh} টি) *
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={maxAvailableInWh}
+                        value={disassembleCount}
+                        onChange={(e) => setDisassembleCount(Number(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-lg font-bold font-mono text-slate-800 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsDisassembleModalOpen(false)}
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                      >
+                        বাতিল
+                      </button>
+                      <button
+                        type="button"
+                        disabled={maxAvailableInWh === 0}
+                        onClick={handleDisassemblePackages}
+                        className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white rounded-xl font-bold cursor-pointer shadow-sm transition"
+                      >
+                        আনপ্যাক নিশ্চিত করুন
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: ADD NEW WAREHOUSE LOCATION */}
+      {isAddWarehouseModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-scale-up">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-xl">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">নতুন গুদাম/লোকেশন যুক্ত করুন</h3>
+                  <span className="text-[10px] text-slate-400 font-mono">{activeProgram?.name}</span>
+                </div>
+              </div>
+              <button onClick={() => setIsAddWarehouseModalOpen(false)} className="text-slate-400 hover:text-slate-700 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddNewWarehouse} className="space-y-4 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  গুদাম বা ডিপোর নাম (Warehouse Location Name) *
                 </label>
                 <input
-                  type="number"
-                  min="1"
-                  max={selectedPackageForDisassemble.assembledQuantity}
-                  value={disassembleCount}
-                  onChange={(e) => setDisassembleCount(Number(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-lg font-bold font-mono text-slate-800 focus:outline-none focus:border-amber-500"
+                  type="text"
+                  required
+                  value={newWarehouseInput}
+                  onChange={(e) => setNewWarehouseInput(e.target.value)}
+                  placeholder="যেমন: সিলেট, কুড়িগ্রাম, রংপুর, চট্টগ্রাম ক্যাম্প-২..."
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm font-bold text-slate-800 focus:outline-none focus:border-amber-500"
                 />
+              </div>
+
+              {/* Suggestions */}
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-wider">
+                  জনপ্রিয় লোকেশন প্রিসেটস:
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা', 'রংপুর', 'সিলেট', 'কুড়িগ্রাম', 'কক্সবাজার ক্যাম্প-১', 'কক্সবাজার ক্যাম্প-৪'].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setNewWarehouseInput(preset)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsDisassembleModalOpen(false)}
+                  onClick={() => setIsAddWarehouseModalOpen(false)}
                   className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
                 >
                   বাতিল
                 </button>
                 <button
-                  type="button"
-                  onClick={handleDisassemblePackages}
+                  type="submit"
                   className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer shadow-sm transition"
                 >
-                  আনপ্যাক নিশ্চিত করুন
+                  গুদাম তৈরি করুন
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5.5: MANAGE WAREHOUSES MODAL (EDIT / RENAME / DELETE) */}
+      {isManageWarehousesModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-up max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-slate-900 text-amber-400 rounded-2xl shadow-xs">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-800">
+                    গুদাম ও ওয়্যারহাউস ব্যবস্থাপনা (Manage Warehouses)
+                  </h3>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {activeProgram?.name} &bull; মোট {programWarehouses.length} টি গুদাম
+                  </span>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsManageWarehousesModalOpen(false);
+                  setEditingWarehouseName(null);
+                }} 
+                className="text-slate-400 hover:text-slate-700 p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <p className="text-slate-500 text-[11.5px] leading-relaxed">
+                এখানে আপনার প্রোগ্রামের সকল গুদাম ও ডিপোর তালিকা রয়েছে। আপনি যেকোনো গুদামের নাম পরিবর্তন (এডিট) করতে পারেন, নতুন গুদাম যুক্ত করতে পারেন অথবা অপ্রয়োজনীয় গুদাম মুছে ফেলতে পারেন।
+              </p>
+
+              {/* Warehouse List Cards */}
+              <div className="space-y-2.5">
+                {programWarehouses.map((wh) => {
+                  const isCurrentActive = selectedWarehouse === wh;
+                  const isEditing = editingWarehouseName === wh;
+                  const itemsCount = currentItems.filter(i => getItemWarehouseStock(i, wh).totalReceived > 0).length;
+                  const totalUnits = currentItems.reduce((sum, i) => sum + getItemWarehouseStock(i, wh).totalReceived, 0);
+                  const assembledPacks = currentPackages.reduce((sum, p) => sum + getPackageWarehouseAssembled(p, wh), 0);
+
+                  return (
+                    <div 
+                      key={wh}
+                      className={`rounded-2xl p-3.5 border transition ${
+                        isCurrentActive 
+                          ? 'bg-amber-50/60 border-amber-300 ring-1 ring-amber-400/40' 
+                          : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <label className="text-[11px] font-bold text-slate-700">
+                            গুদামের নতুন নাম লিখুন:
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={renameWarehouseInput}
+                              onChange={(e) => setRenameWarehouseInput(e.target.value)}
+                              className="flex-1 bg-white border border-amber-400 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:ring-1 focus:ring-amber-500"
+                              placeholder="নতুন নাম..."
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRenameWarehouse(wh, renameWarehouseInput)}
+                              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer transition shadow-xs"
+                            >
+                              সংরক্ষণ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingWarehouseName(null)}
+                              className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl font-bold cursor-pointer transition"
+                            >
+                              বাতিল
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-black text-slate-850 text-sm flex items-center gap-1">
+                                📍 {wh}
+                              </span>
+                              {isCurrentActive ? (
+                                <span className="bg-emerald-100 text-emerald-800 font-bold text-[9.5px] px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                  সক্রিয়
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedWarehouse(wh);
+                                    showAlert('success', `সক্রিয় কর্মক্ষেত্র পরিবর্তন করে "${wh}" গুদামে নির্ধারণ করা হয়েছে।`);
+                                  }}
+                                  className="text-[9.5px] bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 px-2 py-0.5 rounded-full font-bold cursor-pointer transition"
+                                >
+                                  🎯 নির্বাচন করুন
+                                </button>
+                              )}
+                            </div>
+                            
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+                              <span>মালামাল: <strong className="text-slate-700">{itemsCount}</strong> টি পণ্য</span>
+                              <span>&bull;</span>
+                              <span>মোট প্রাপ্ত: <strong className="text-slate-700">{totalUnits}</strong> ইউনিট</span>
+                              <span>&bull;</span>
+                              <span>প্যাকেজ: <strong className="text-amber-700">{assembledPacks}</strong> টি</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 self-end sm:self-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingWarehouseName(wh);
+                                setRenameWarehouseInput(wh);
+                              }}
+                              className="p-2 rounded-xl bg-white hover:bg-amber-50 text-amber-800 border border-slate-200 hover:border-amber-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                              title="নাম পরিবর্তন করুন"
+                            >
+                              ✏️ <span>এডিট নাম</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteWarehouse(wh)}
+                              disabled={programWarehouses.length <= 1}
+                              className="p-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-slate-200 hover:border-rose-300 font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-2xs disabled:opacity-40"
+                              title={programWarehouses.length <= 1 ? 'শেষ গুদামটি মোছা যাবে না' : 'গুদামটি মুছে ফেলুন'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>মুছুন</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Add New Warehouse Section inside Management modal */}
+              <div className="pt-3 border-t border-slate-200 space-y-2">
+                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                  <Plus className="w-4 h-4 text-emerald-600" />
+                  <span>নতুন গুদাম বা ওয়্যারহাউস যোগ করুন</span>
+                </h4>
+                
+                <form 
+                  onSubmit={(e) => {
+                    handleAddNewWarehouse(e);
+                  }} 
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={newWarehouseInput}
+                    onChange={(e) => setNewWarehouseInput(e.target.value)}
+                    placeholder="যেমন: রংপুর, সিলেট, টেকনাফ গুদাম..."
+                    className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:ring-1 focus:ring-amber-500"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer transition shadow-xs shrink-0"
+                  >
+                    + যোগ করুন
+                  </button>
+                </form>
+
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[10px] text-slate-400 font-bold">প্রস্তাবিত:</span>
+                  {['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা', 'রংপুর', 'সিলেট', 'কুড়িগ্রাম', 'কক্সবাজার ক্যাম্প-৪'].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={programWarehouses.includes(preset)}
+                      onClick={() => setNewWarehouseInput(preset)}
+                      className="text-[10px] bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 px-2 py-0.5 rounded-md font-medium cursor-pointer transition"
+                    >
+                      +{preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-3 flex justify-end border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsManageWarehousesModalOpen(false);
+                    setEditingWarehouseName(null);
+                  }}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold cursor-pointer transition shadow-sm"
+                >
+                  সম্পন্ন
                 </button>
               </div>
             </div>
@@ -2434,7 +3701,7 @@ export default function InventoryDesk({
         </div>
       )}
 
-      {/* MODAL 5: CREATE NEW PACKAGE RECIPE */}
+      {/* MODAL 6: CREATE NEW PACKAGE RECIPE */}
       {isCreatePackageModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-scale-up max-h-[90vh] overflow-y-auto">

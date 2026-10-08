@@ -1885,7 +1885,7 @@ service cloud.firestore {
                 serviceRecords={serviceRecords}
                 initialProgramId={selectedInventoryProgramId}
                 onSelectProgramId={(pId) => setSelectedInventoryProgramId(pId)}
-                onUpdateProgramInventory={async (programId, invItems, invPackages) => {
+                onUpdateProgramInventory={async (programId, invItems, invPackages, warehouses) => {
                   const updatedPrograms = programs.map(p => {
                     if (p.id === programId) {
                       const totalAssembled = invPackages.reduce((sum, pkg) => sum + pkg.assembledQuantity, 0);
@@ -1897,6 +1897,7 @@ service cloud.firestore {
                         ...p,
                         inventoryItems: invItems,
                         inventoryPackages: invPackages,
+                        warehouses: warehouses !== undefined ? warehouses : p.warehouses,
                         targetStockSize: totalAssembled > 0 ? totalAssembled : p.targetStockSize,
                         remainingStock: totalAssembled > 0 ? Math.max(0, totalAssembled - distributed) : p.remainingStock
                       };

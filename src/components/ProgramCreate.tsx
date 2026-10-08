@@ -42,6 +42,10 @@ export default function ProgramCreate({
   const [programDuration, setProgramDuration] = useState('');
   const [targetStockSize, setTargetStockSize] = useState<number>(100);
 
+  // Warehouses / Location management
+  const [warehouses, setWarehouses] = useState<string[]>(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
+  const [newWarehouseInput, setNewWarehouseInput] = useState('');
+
   // Search & Multiple Donors variables
   const [selectedDonors, setSelectedDonors] = useState<string[]>([]);
   const [donorSearch, setDonorSearch] = useState('');
@@ -57,6 +61,7 @@ export default function ProgramCreate({
       setProgramDuration(editingProgram.programDuration);
       setTargetStockSize(editingProgram.targetStockSize);
       setSelectedDonors(editingProgram.donors || []);
+      setWarehouses(editingProgram.warehouses && editingProgram.warehouses.length > 0 ? editingProgram.warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
     } else {
       setId(generateNewId());
       setName('');
@@ -68,8 +73,27 @@ export default function ProgramCreate({
       setProgramDuration('1 Month');
       setTargetStockSize(250);
       setSelectedDonors([]);
+      setWarehouses(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
     }
   }, [editingProgram]);
+
+  // Warehouse Helpers
+  const addWarehouse = (whName: string) => {
+    const trimmed = whName.trim();
+    if (!trimmed) return;
+    if (!warehouses.includes(trimmed)) {
+      setWarehouses([...warehouses, trimmed]);
+    }
+    setNewWarehouseInput('');
+  };
+
+  const removeWarehouse = (whName: string) => {
+    if (warehouses.length <= 1) {
+      alert('অন্তত একটি গুদাম/লোকেশন থাকা আবশ্যক!');
+      return;
+    }
+    setWarehouses(warehouses.filter(w => w !== whName));
+  };
 
   // Filter donor selections with live search
   const filteredDonors = donorsList.filter((d) =>
@@ -103,7 +127,10 @@ export default function ProgramCreate({
       targetStockSize,
       remainingStock: editingProgram 
         ? editingProgram.remainingStock + (targetStockSize - editingProgram.targetStockSize)
-        : targetStockSize
+        : targetStockSize,
+      warehouses: warehouses.length > 0 ? warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
+      inventoryItems: editingProgram?.inventoryItems,
+      inventoryPackages: editingProgram?.inventoryPackages
     });
   };
 
@@ -288,6 +315,85 @@ export default function ProgramCreate({
               placeholder="Total count of distribution items"
               className="w-full border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
             />
+          </div>
+        </div>
+
+        {/* WAREHOUSE / STORAGE LOCATIONS */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-0.5">
+              গুদাম ও ওয়্যারহাউস লোকেশন (Storage Warehouses)
+            </label>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              এই প্রোগ্রামের পণ্য ও প্যাকেজ কোন কোন গুদামে আলাদা আলাদা হিসাবে থাকবে তা নির্বাচন বা যুক্ত করুন।
+            </p>
+          </div>
+
+          {/* Active Warehouses Tags */}
+          <div className="flex flex-wrap gap-2">
+            {warehouses.map((wh) => (
+              <span
+                key={wh}
+                className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-emerald-300 text-emerald-800 text-xs font-bold rounded-lg shadow-2xs"
+              >
+                <span>📍 {wh}</span>
+                <button
+                  type="button"
+                  onClick={() => removeWarehouse(wh)}
+                  className="hover:bg-rose-100 text-rose-500 rounded p-0.5 transition cursor-pointer"
+                  title="গুদাম মুছে ফেলুন"
+                >
+                  &times;
+                </button>
+              </span>
+            ))}
+          </div>
+
+          {/* Common Presets */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-1">
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">প্রস্তাবিত লোকেশন:</span>
+            {['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা', 'ঢাকা', 'চট্টগ্রাম', 'সিলেট', 'রংপুর', 'রাজশাহী'].map((loc) => {
+              const isAdded = warehouses.includes(loc);
+              return (
+                <button
+                  key={loc}
+                  type="button"
+                  onClick={() => addWarehouse(loc)}
+                  disabled={isAdded}
+                  className={`text-[11px] px-2 py-0.5 rounded border transition cursor-pointer ${
+                    isAdded
+                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border-slate-200'
+                  }`}
+                >
+                  +{loc}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Add Custom Warehouse Input */}
+          <div className="flex gap-2 pt-1">
+            <input
+              type="text"
+              value={newWarehouseInput}
+              onChange={(e) => setNewWarehouseInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addWarehouse(newWarehouseInput);
+                }
+              }}
+              placeholder="কাস্টম গুদামের নাম লিখুন (যেমন: বরিশাল ওয়্যারহাউস)..."
+              className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => addWarehouse(newWarehouseInput)}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
+            >
+              যোগ করুন
+            </button>
           </div>
         </div>
 

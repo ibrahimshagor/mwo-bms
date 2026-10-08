@@ -66,13 +66,23 @@ export function exportAllToExcel(
   // Tab 4: Service records Disbursed Logs
   const serviceLogsData = serviceRecords.map(sr => {
     const bMatch = beneficiaries.find(b => b.id === sr.beneficiaryId);
+    const isAnon = sr.isAnonymous || sr.beneficiaryId.startsWith('ANON');
+    const recipientName = isAnon 
+      ? (sr.recipientLabel || `অ্যানোনিমাস প্রাপক (${sr.community || 'রোহিঙ্গা'})`)
+      : (bMatch ? bMatch.name : sr.beneficiaryId);
+
     return {
       "Record Disbursed ID": sr.id,
       "Relief Program Link ID": sr.programId,
-      "Receiving Citizen Beneficiary Name": bMatch ? bMatch.name : "N/A",
+      "Distribution Mode": isAnon ? "অ্যানোনিমাস (Anonymous)" : "নিবন্ধিত (Registered)",
+      "Receiving Citizen Beneficiary Name": recipientName,
+      "Beneficiary Community (সম্প্রদায়)": sr.community || (bMatch ? (bMatch.nationality === 'Rohingya' ? 'Rohingya Community' : 'Local Community') : 'General'),
+      "Camp / Location (ক্যাম্প/বিতরণ স্থল)": sr.campOrLocation || (bMatch?.address) || "N/A",
+      "Source Warehouse (উৎস গুদাম)": sr.warehouse || "কেন্দ্রীয় গুদাম",
       "Quantity Package Portion Served": sr.packageCount,
       "Disbursed Official Date": sr.servedDate,
-      "Dispensing Officer Account ID": sr.servedAdmin
+      "Dispensing Officer Account ID": sr.servedAdmin,
+      "Notes / Comments": sr.notes || ""
     };
   });
   const wsLogs = XLSX.utils.json_to_sheet(serviceLogsData);
