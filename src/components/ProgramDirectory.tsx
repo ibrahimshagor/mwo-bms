@@ -274,6 +274,9 @@ export default function ProgramDirectory({
       if (selectedDeskProgram.warehouses && selectedDeskProgram.warehouses.length > 0) {
         setAnonWarehouse(selectedDeskProgram.warehouses[0]);
       }
+      if (selectedDeskProgram.locations && selectedDeskProgram.locations.length > 0) {
+        setAnonCampOrLocation(selectedDeskProgram.locations[0]);
+      }
     }
   }, [selectedDeskProgramId]);
 
@@ -291,6 +294,7 @@ export default function ProgramDirectory({
     const seqNum = progAnonRecords.length + 1;
     const token = anonRecipientToken.trim() || `ANON-${anonCommunity.includes('Rohingya') ? 'ROH' : 'LOC'}-${seqNum.toString().padStart(3, '0')}`;
     const targetWh = anonWarehouse || (selectedDeskProgram.warehouses?.[0] || 'প্রধান গুদাম');
+    const campLoc = anonCampOrLocation.trim() || (selectedDeskProgram.locations?.[0] || 'বিতরণস্থল');
 
     const newRecord: ServiceRecord = {
       id: `SR-ANON-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
@@ -302,7 +306,7 @@ export default function ProgramDirectory({
       isAnonymous: true,
       community: anonCommunity,
       recipientLabel: `${token} (${anonCommunity === 'Rohingya Community' ? 'রোহিঙ্গা শরণার্থী' : 'স্থানীয় নাগরিক'})`,
-      campOrLocation: anonCampOrLocation.trim() || (anonCommunity === 'Rohingya Community' ? 'উখিয়া রোহিঙ্গা ক্যাম্প' : 'বিতরণ স্থল'),
+      campOrLocation: campLoc,
       warehouse: targetWh,
       notes: anonNotes.trim()
     };
@@ -312,7 +316,7 @@ export default function ProgramDirectory({
     const updatedRemaining = selectedDeskProgram.remainingStock - anonPackageCount;
     onUpdateRemainingStock(selectedDeskProgram.id, updatedRemaining);
 
-    showDeskAlert('success', `সফল! ${newRecord.recipientLabel}-কে ${anonPackageCount} টি প্যাকেজ সফলভাবে বিতরণ করা হয়েছে। [গুদাম: ${targetWh}]`);
+    showDeskAlert('success', `সফল! ${newRecord.recipientLabel}-কে ${anonPackageCount} টি প্যাকেজ সফলভাবে বিতরণ করা হয়েছে। [বিতরণস্থল: ${campLoc}, গুদাম: ${targetWh}]`);
     setAnonRecipientToken('');
   };
 
@@ -336,7 +340,7 @@ export default function ProgramDirectory({
     const progAnonRecords = serviceRecords.filter(sr => sr.programId === selectedDeskProgram.id && sr.isAnonymous);
     const startSeq = progAnonRecords.length;
     const targetWh = anonWarehouse || (selectedDeskProgram.warehouses?.[0] || 'প্রধান গুদাম');
-    const campLoc = anonCampOrLocation.trim() || (anonCommunity === 'Rohingya Community' ? 'উখিয়া রোহিঙ্গা ক্যাম্প' : 'বিতরণ স্থল');
+    const campLoc = anonCampOrLocation.trim() || (selectedDeskProgram.locations?.[0] || 'বিতরণস্থল');
 
     for (let i = 1; i <= totalRecipients; i++) {
       const seqNum = startSeq + i;
@@ -361,7 +365,7 @@ export default function ProgramDirectory({
     const updatedRemaining = selectedDeskProgram.remainingStock - totalPacksNeeded;
     onUpdateRemainingStock(selectedDeskProgram.id, updatedRemaining);
 
-    showDeskAlert('success', `সফল! মোট ${totalRecipients} জন ${anonCommunity === 'Rohingya Community' ? 'রোহিঙ্গা' : 'স্থানীয়'} সুবিধাভোগীকে ${totalPacksNeeded} টি প্যাকেজ সফলভাবে বিতরণ করা হয়েছে। [গুদাম: ${targetWh}]`);
+    showDeskAlert('success', `সফল! মোট ${totalRecipients} জন ${anonCommunity === 'Rohingya Community' ? 'রোহিঙ্গা' : 'স্থানীয়'} সুবিধাভোগীকে ${totalPacksNeeded} টি প্যাকেজ সফলভাবে বিতরণ করা হয়েছে। [বিতরণস্থল: ${campLoc}, গুদাম: ${targetWh}]`);
   };
 
   return (
@@ -498,6 +502,18 @@ export default function ProgramDirectory({
                                 {p.warehouses.map(w => (
                                   <span key={w} className="bg-white/80 border border-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-medium">
                                     📍 {w}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Distribution Locations list if configured */}
+                            {p.locations && p.locations.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap text-[9px] text-emerald-800 pt-1 border-t border-amber-200/40">
+                                <span className="font-bold text-slate-400">বিতরণ এলাকা ({p.locations.length}):</span>
+                                {p.locations.map(loc => (
+                                  <span key={loc} className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-1.5 py-0.2 rounded font-semibold">
+                                    🎯 {loc}
                                   </span>
                                 ))}
                               </div>
@@ -721,8 +737,7 @@ export default function ProgramDirectory({
                   }`}
                 >
                   <Tent className="w-4 h-4" />
-                  <span>অ্যানোনিমাস বিতরণ (Anonymous/Camp)</span>
-                  <span className="text-[9px] bg-amber-700/80 text-amber-100 px-1.5 py-0.2 rounded font-mono">রোহিঙ্গা</span>
+                  <span>অ্যানোনিমাস বিতরণ (Anonymous Distribution)</span>
                 </button>
               </div>
 
@@ -736,10 +751,10 @@ export default function ProgramDirectory({
                       </div>
                       <div>
                         <h4 className="font-bold text-amber-900 mb-0.5">
-                          রোহিঙ্গা ক্যাম্প ও ফিল্ড অ্যানোনিমাস বিতরণ মোড
+                          অ্যানোনিমাস বিতরণ মোড (Anonymous Distribution)
                         </h4>
                         <p className="text-amber-800 text-[11px] leading-relaxed">
-                          ক্যাম্প কর্তৃপক্ষের নির্দেশনা অনুযায়ী রোহিঙ্গাদের ব্যক্তিগত তথ্য সংরক্ষণ না করে সরাসরি বিতরণ সম্পন্ন করার মোড। এখানে কোনো নাম বা এনআইডি খোঁজার বা এন্ট্রি করার প্রয়োজন নেই; একাধিকবার তাৎক্ষণিক বিতরণ সম্পন্ন করা যাবে।
+                          জরুরি ত্রাণ বিতরণ বা বিশেষ পরিস্থিতিতে ব্যক্তিগত তথ্য সংরক্ষণ না করে সরাসরি বিতরণ সম্পন্ন করার মোড। সুবিধাভোগী সম্প্রদায় ও বিতরণস্থল নির্বাচন করে তাৎক্ষণিক বিতরণ সম্পন্ন করা যাবে।
                         </p>
                       </div>
                     </div>
@@ -748,7 +763,7 @@ export default function ProgramDirectory({
                   {/* Community Selector */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      সুবিধাভোগী সম্প্রদায় (Community) *
+                      সুবিধাভোগী সম্প্রদায় (Beneficiary Community) *
                     </label>
                     <div className="grid grid-cols-3 gap-2">
                       {[
@@ -797,32 +812,83 @@ export default function ProgramDirectory({
                     </div>
                   )}
 
-                  {/* Camp / Distribution Location */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      ক্যাম্প নম্বর বা বিতরণ স্থল (Camp Location / Block)
-                    </label>
-                    <input
-                      type="text"
-                      value={anonCampOrLocation}
-                      onChange={(e) => setAnonCampOrLocation(e.target.value)}
-                      placeholder="যেমন: উখিয়া রোহিঙ্গা ক্যাম্প ১২, ব্লক সি..."
-                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-amber-500 bg-white"
-                    />
-                    {/* Quick Camp Location Chips */}
-                    <div className="flex items-center gap-1.5 flex-wrap pt-1.5">
-                      <span className="text-[10px] font-bold text-slate-400">কুইক সিলেক্ট:</span>
-                      {['উখিয়া ক্যাম্প ১২', 'ক্যাম্প ৪ (মধুছড়া)', 'কুতুপালং ক্যাম্প', 'লেদা ক্যাম্প (টেকনাফ)', 'বালুখালী ক্যাম্প ৯', 'ক্যাম্প ১৮'].map(preset => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setAnonCampOrLocation(preset)}
-                          className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md font-medium cursor-pointer transition"
-                        >
-                          +{preset}
-                        </button>
-                      ))}
+                  {/* Distribution Location / Area (বিতরণস্থল) */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                        <span>বিতরণস্থল (Distribution Location / Area) *</span>
+                      </label>
+                      {selectedDeskProgram.locations && selectedDeskProgram.locations.length > 0 && (
+                        <span className="text-[10.5px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md font-mono font-bold">
+                          প্রোগ্রামের নির্ধারিত এলাকা: {selectedDeskProgram.locations.length} টি
+                        </span>
+                      )}
                     </div>
+
+                    {selectedDeskProgram.locations && selectedDeskProgram.locations.length > 0 ? (
+                      <div className="space-y-2">
+                        {/* Dropdown Selector */}
+                        <select
+                          value={anonCampOrLocation || selectedDeskProgram.locations[0]}
+                          onChange={(e) => setAnonCampOrLocation(e.target.value)}
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500"
+                        >
+                          {selectedDeskProgram.locations.map(loc => (
+                            <option key={loc} value={loc}>
+                              🎯 {loc}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Quick 1-click selectable location buttons */}
+                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                          <span className="text-[10px] font-bold text-slate-400">কুইক সিলেক্ট:</span>
+                          {selectedDeskProgram.locations.map(loc => {
+                            const isSelected = (anonCampOrLocation || selectedDeskProgram.locations![0]) === loc;
+                            return (
+                              <button
+                                key={loc}
+                                type="button"
+                                onClick={() => setAnonCampOrLocation(loc)}
+                                className={`text-xs px-2.5 py-1 rounded-lg font-bold border transition cursor-pointer flex items-center gap-1 ${
+                                  isSelected
+                                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                    : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                <span>🎯 {loc}</span>
+                                {isSelected && <span className="text-[10px]">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Fallback input if program doesn't have locations configured yet */
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={anonCampOrLocation}
+                          onChange={(e) => setAnonCampOrLocation(e.target.value)}
+                          placeholder="বিতরণস্থলের নাম লিখুন (যেমন: উখিয়া ক্যাম্প ১২, টেকনাফ লেদা)..."
+                          className="w-full border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-amber-500 bg-white"
+                        />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-bold text-slate-400">প্রস্তাবিত বিতরণস্থল:</span>
+                          {['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'ময়মনসিংহ সদর', 'কক্সবাজার সদর'].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => setAnonCampOrLocation(preset)}
+                              className="text-[10px] bg-white hover:bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium border border-slate-200 cursor-pointer transition"
+                            >
+                              +{preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Tabs: Single 1-Click Serve vs Batch Bulk Serve */}
@@ -1310,6 +1376,30 @@ export default function ProgramDirectory({
                 <span className="col-span-5 font-bold">Linking Donors:</span>
                 <span className="col-span-7 font-medium text-slate-850">{getDonorNames(viewDetailsProgram.donors)}</span>
               </div>
+              {viewDetailsProgram.warehouses && viewDetailsProgram.warehouses.length > 0 && (
+                <div className="grid grid-cols-12 gap-1 py-1 border-b border-slate-100">
+                  <span className="col-span-5 font-bold text-amber-700">সংরক্ষণ গুদাম:</span>
+                  <span className="col-span-7 font-medium text-slate-800 flex flex-wrap gap-1">
+                    {viewDetailsProgram.warehouses.map(wh => (
+                      <span key={wh} className="bg-amber-50 text-amber-900 text-[10.5px] px-1.5 py-0.5 rounded border border-amber-200 font-semibold">
+                        📍 {wh}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+              {viewDetailsProgram.locations && viewDetailsProgram.locations.length > 0 && (
+                <div className="grid grid-cols-12 gap-1 py-1 border-b border-slate-100">
+                  <span className="col-span-5 font-bold text-emerald-700">বিতরণ এলাকা/অঞ্চল:</span>
+                  <span className="col-span-7 font-medium text-slate-800 flex flex-wrap gap-1">
+                    {viewDetailsProgram.locations.map(loc => (
+                      <span key={loc} className="bg-emerald-50 text-emerald-900 text-[10.5px] px-1.5 py-0.5 rounded border border-emerald-200 font-semibold">
+                        🎯 {loc}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-12 gap-1 py-1">
                 <span className="col-span-5 font-bold text-amber-700">Inventory Packages:</span>
                 <span className="col-span-7 font-bold text-slate-850 font-mono">

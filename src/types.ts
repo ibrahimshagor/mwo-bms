@@ -90,6 +90,7 @@ export interface Program {
   targetStockSize: number;
   remainingStock: number;
   warehouses?: string[]; // গুদাম/ওয়্যারহাউস তালিকা (যেমন: ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'])
+  locations?: string[]; // বিতরণ এলাকা / অঞ্চল / বিতরণস্থল তালিকা (যেমন: ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'ময়মনসিংহ সদর'])
   inventoryItems?: InventoryItem[];
   inventoryPackages?: InventoryPackage[];
 }

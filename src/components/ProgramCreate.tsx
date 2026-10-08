@@ -1,6 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { User, Program, ProgramType, BeneficiaryCommunity } from '../types';
-import { Layers, Save, Search, Check, FolderPlus } from 'lucide-react';
+import { Layers, Save, Search, Check, FolderPlus, MapPin, Building2 } from 'lucide-react';
 
 interface ProgramCreateProps {
   donorsList: User[];
@@ -42,9 +42,13 @@ export default function ProgramCreate({
   const [programDuration, setProgramDuration] = useState('');
   const [targetStockSize, setTargetStockSize] = useState<number>(100);
 
-  // Warehouses / Location management
+  // Warehouses / Storage management
   const [warehouses, setWarehouses] = useState<string[]>(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
   const [newWarehouseInput, setNewWarehouseInput] = useState('');
+
+  // Distribution Locations / Areas management (বিতরণ এলাকা / অঞ্চল / বিতরণস্থল)
+  const [locations, setLocations] = useState<string[]>(['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
+  const [newLocationInput, setNewLocationInput] = useState('');
 
   // Search & Multiple Donors variables
   const [selectedDonors, setSelectedDonors] = useState<string[]>([]);
@@ -62,6 +66,7 @@ export default function ProgramCreate({
       setTargetStockSize(editingProgram.targetStockSize);
       setSelectedDonors(editingProgram.donors || []);
       setWarehouses(editingProgram.warehouses && editingProgram.warehouses.length > 0 ? editingProgram.warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
+      setLocations(editingProgram.locations && editingProgram.locations.length > 0 ? editingProgram.locations : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
     } else {
       setId(generateNewId());
       setName('');
@@ -74,6 +79,7 @@ export default function ProgramCreate({
       setTargetStockSize(250);
       setSelectedDonors([]);
       setWarehouses(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
+      setLocations(['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
     }
   }, [editingProgram]);
 
@@ -93,6 +99,24 @@ export default function ProgramCreate({
       return;
     }
     setWarehouses(warehouses.filter(w => w !== whName));
+  };
+
+  // Location / Area Helpers
+  const addLocation = (locName: string) => {
+    const trimmed = locName.trim();
+    if (!trimmed) return;
+    if (!locations.includes(trimmed)) {
+      setLocations([...locations, trimmed]);
+    }
+    setNewLocationInput('');
+  };
+
+  const removeLocation = (locName: string) => {
+    if (locations.length <= 1) {
+      alert('অন্তত একটি বিতরণ এলাকা বা অঞ্চল থাকা প্রয়োজন!');
+      return;
+    }
+    setLocations(locations.filter(l => l !== locName));
   };
 
   // Filter donor selections with live search
@@ -129,6 +153,7 @@ export default function ProgramCreate({
         ? editingProgram.remainingStock + (targetStockSize - editingProgram.targetStockSize)
         : targetStockSize,
       warehouses: warehouses.length > 0 ? warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
+      locations: locations.length > 0 ? locations : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা'],
       inventoryItems: editingProgram?.inventoryItems,
       inventoryPackages: editingProgram?.inventoryPackages
     });
@@ -393,6 +418,92 @@ export default function ProgramCreate({
               className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
             >
               যোগ করুন
+            </button>
+          </div>
+        </div>
+
+        {/* DISTRIBUTION LOCATIONS / AREAS (বিতরণ এলাকা / অঞ্চল / বিতরণস্থল) */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-800 mb-0.5 flex items-center gap-1.5">
+              <MapPin className="w-4 h-4 text-emerald-600" />
+              <span>বিতরণ এলাকা / অঞ্চল / বিতরণস্থল (Distribution Locations / Areas) *</span>
+            </label>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              গুদাম থেকে পণ্য এনে কোন কোন নির্দিষ্ট এলাকা, ক্যাম্প বা অঞ্চলে বিতরণ করা হবে সেগুলোর তালিকা এখানে যুক্ত করুন (যেমন: উখিয়া ক্যাম্প ১২, টেকনাফ লেদা, ময়মনসিংহ সদর)। বিতরণ করার সময় এগুলো সরাসরি বিতরণস্থল ড্রপডাউন ও তালিকায় পাওয়া যাবে।
+            </p>
+          </div>
+
+          {/* Active Locations Tags */}
+          <div className="flex flex-wrap gap-2">
+            {locations.length === 0 ? (
+              <span className="text-xs text-amber-700 italic bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                ⚠️ কোনো এলাকা যুক্ত করা হয়নি। নিচে প্রস্তাবিত তালিকা থেকে ক্লিক করুন বা কাস্টম এলাকা লিখুন।
+              </span>
+            ) : (
+              locations.map((loc) => (
+                <span
+                  key={loc}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-emerald-300 text-emerald-900 text-xs font-bold rounded-lg shadow-2xs"
+                >
+                  <span>📍 {loc}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeLocation(loc)}
+                    className="hover:bg-rose-100 text-rose-500 rounded p-0.5 transition cursor-pointer"
+                    title="এলাকা মুছে ফেলুন"
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+
+          {/* Proposed Location Presets */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-1">
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">প্রস্তাবিত এলাকা:</span>
+            {['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'বালুখালী ক্যাম্প ৯', 'মধুছড়া ক্যাম্প ৪', 'ভাসানচর ক্যাম্প', 'ময়মনসিংহ সদর', 'ত্রিশাল', 'কক্সবাজার সদর'].map((locPreset) => {
+              const isAdded = locations.includes(locPreset);
+              return (
+                <button
+                  key={locPreset}
+                  type="button"
+                  onClick={() => addLocation(locPreset)}
+                  disabled={isAdded}
+                  className={`text-[11px] px-2 py-0.5 rounded border transition cursor-pointer ${
+                    isAdded
+                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border-slate-200'
+                  }`}
+                >
+                  +{locPreset}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Add Custom Location Input */}
+          <div className="flex gap-2 pt-1">
+            <input
+              type="text"
+              value={newLocationInput}
+              onChange={(e) => setNewLocationInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addLocation(newLocationInput);
+                }
+              }}
+              placeholder="কাস্টম এলাকা বা অঞ্চলের নাম লিখুন (যেমন: টেকনাফ লেদা বা ময়মনসিংহ সদর)..."
+              className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => addLocation(newLocationInput)}
+              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
+            >
+              এলাকা যোগ করুন
             </button>
           </div>
         </div>

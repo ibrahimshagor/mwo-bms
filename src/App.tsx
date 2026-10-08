@@ -90,7 +90,7 @@ export default function App() {
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(() => getSavedState('mwo_beneficiaries', DEFAULT_BENEFICIARIES));
   const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>(() => getSavedState('mwo_service_records', DEFAULT_SERVICE_RECORDS));
 
-  // Dynamic programs mapper to make sure remainingStock is ALWAYS 100% accurate based on serviceRecords & inventory packages!
+  // Dynamic programs mapper to make sure remainingStock & locations are ALWAYS 100% accurate based on serviceRecords & inventory packages!
   const enrichedPrograms = programs.map(p => {
     const distributed = serviceRecords
       .filter(sr => sr.programId === p.id)
@@ -99,8 +99,15 @@ export default function App() {
     const totalAssembled = (p.inventoryPackages || []).reduce((sum, pkg) => sum + pkg.assembledQuantity, 0);
     const targetStock = (p.inventoryPackages && p.inventoryPackages.length > 0) ? totalAssembled : p.targetStockSize;
 
+    // Ensure locations exist for program (if missing from older localStorage)
+    const defaultLocs = DEFAULT_PROGRAMS.find(dp => dp.id === p.id)?.locations;
+    const finalLocations = (p.locations && p.locations.length > 0)
+      ? p.locations
+      : (defaultLocs || (p.warehouses && p.warehouses.length > 0 ? p.warehouses : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা']));
+
     return {
       ...p,
+      locations: finalLocations,
       targetStockSize: targetStock,
       remainingStock: Math.max(0, targetStock - distributed)
     };

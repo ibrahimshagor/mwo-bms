@@ -64,6 +64,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 500,
     remainingStock: 497,
     warehouses: ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
+    locations: ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'ময়মনসিংহ সদর'],
     inventoryItems: [
       { 
         id: 'ITEM-101', 
@@ -201,6 +202,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 1200,
     remainingStock: 1200,
     warehouses: ['কক্সবাজার ক্যাম্প-১', 'কক্সবাজার ক্যাম্প-৪'],
+    locations: ['কুতুপালং ক্যাম্প ১', 'মধুছড়া ক্যাম্প ৪', 'বালুখালী ক্যাম্প ৯'],
     inventoryItems: [
       { 
         id: 'ITEM-201', 
@@ -286,6 +288,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 300,
     remainingStock: 298,
     warehouses: ['মিরপুর গুদাম', 'মোহাম্মদপুর গুদাম'],
+    locations: ['মিরপুর বস্তি এলাকা', 'মোহাম্মদপুর জেনেভা ক্যাম্প', 'কল্যাণপুর পোড়া বস্তি'],
     inventoryItems: [
       { 
         id: 'ITEM-301', 
