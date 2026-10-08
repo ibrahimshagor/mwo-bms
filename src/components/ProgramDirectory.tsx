@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 import { 
   Building, BookOpen, Layers, Search, Eye, ClipboardList, PenTool, CheckCircle, 
   AlertCircle, ChevronRight, CornerDownRight, RotateCcw, HelpCircle, Scan,
-  Trash2, UserCheck, Plus, ShoppingBag, Download
+  Trash2, UserCheck, Plus, ShoppingBag, Download, Boxes
 } from 'lucide-react';
 
 interface ProgramDirectoryProps {
@@ -20,6 +20,7 @@ interface ProgramDirectoryProps {
   onSaveServiceRecord: (record: ServiceRecord) => void;
   onRemoveServiceRecord: (recordId: string) => void;
   onUpdateServiceRecordPackageCount: (recordId: string, newCount: number) => void;
+  onNavigateToInventory?: (programId: string) => void;
 }
 
 export default function ProgramDirectory({
@@ -33,7 +34,8 @@ export default function ProgramDirectory({
   onUpdateRemainingStock,
   onSaveServiceRecord,
   onRemoveServiceRecord,
-  onUpdateServiceRecordPackageCount
+  onUpdateServiceRecordPackageCount,
+  onNavigateToInventory
 }: ProgramDirectoryProps) {
   
   // States
@@ -320,9 +322,15 @@ export default function ProgramDirectory({
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredPrograms.map((p) => {
-                  const percentDone = Math.round(
-                    ((p.targetStockSize - p.remainingStock) / p.targetStockSize) * 100
-                  );
+                  const invAssembled = (p.inventoryPackages || []).reduce((sum, pkg) => sum + (pkg.assembledQuantity || 0), 0);
+                  const invItemsCount = (p.inventoryItems || []).length;
+                  const servedCount = serviceRecords.filter(sr => sr.programId === p.id).reduce((sum, sr) => sum + sr.packageCount, 0);
+                  const effectiveTargetStock = invAssembled > 0 ? invAssembled : p.targetStockSize;
+                  const effectiveRemainingStock = invAssembled > 0 ? Math.max(0, invAssembled - servedCount) : p.remainingStock;
+                  const percentDone = effectiveTargetStock > 0 
+                    ? Math.min(100, Math.round(((effectiveTargetStock - effectiveRemainingStock) / effectiveTargetStock) * 100))
+                    : 0;
+
                   return (
                     <div 
                       key={p.id}
@@ -338,20 +346,66 @@ export default function ProgramDirectory({
                         </span>
                       </div>
 
-                      <h4 className="text-xs font-bold font-display text-slate-850 group-hover:text-emerald-700 transition leading-snug line-clamp-2 h-9 mb-3">
+                      <h4 className="text-xs font-bold font-display text-slate-850 group-hover:text-emerald-700 transition leading-snug line-clamp-2 h-9 mb-2">
                         {p.name}
                       </h4>
+
+                      {/* Prominent Dynamic Inventory Packages Card Section */}
+                      <div className="bg-amber-50/80 border border-amber-200/90 rounded-xl p-2.5 my-2 text-xs">
+                        <div className="flex items-center justify-between font-bold text-amber-950 mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <Boxes className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span className="text-[10.5px] font-bold">ইনভেন্টরি প্যাকেজ হিসাব:</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10.5px] font-mono font-black ${
+                            invAssembled > 0 ? 'bg-amber-600 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {invAssembled} টি প্যাক
+                          </span>
+                        </div>
+
+                        {p.inventoryPackages && p.inventoryPackages.length > 0 ? (
+                          <div className="space-y-1 mt-1.5 pt-1.5 border-t border-amber-200/60 text-[10.5px]">
+                            <div className="flex flex-wrap gap-1">
+                              {p.inventoryPackages.map((pkg, idx) => (
+                                <span key={idx} className="bg-white border border-amber-200 text-amber-900 px-1.5 py-0.5 rounded text-[9.5px] font-semibold flex items-center gap-1">
+                                  <span>{pkg.name}:</span>
+                                  <strong className="text-amber-700 font-mono font-bold">{pkg.assembledQuantity} টি</strong>
+                                </span>
+                              ))}
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] text-amber-900 font-medium pt-1">
+                              <span>অবশিষ্ট বিতরণযোগ্য: <strong className="text-emerald-700 font-bold">{effectiveRemainingStock} টি</strong></span>
+                              <span>উপাদান পণ্য: <strong className="text-slate-700">{invItemsCount} টি</strong></span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between items-center text-[10px] text-amber-800 pt-0.5">
+                            <span>{invItemsCount > 0 ? `${invItemsCount} টি মালামাল আইটেম স্টকে আছে` : 'পণ্য ও প্যাকেজ সেট করুন'}</span>
+                            {onNavigateToInventory && (
+                              <button
+                                onClick={() => onNavigateToInventory(p.id)}
+                                className="text-amber-700 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                              >
+                                <span>প্যাকেজ বানান</span> &rarr;
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
                       <div className="mt-auto space-y-2.5">
                         {/* Compact statistics */}
                         <div className="flex justify-between items-center text-[10px] text-slate-500 font-medium">
-                          <span>Target Volume:</span>
-                          <span className="text-slate-800 font-bold">{p.targetStockSize} packs</span>
+                          <span>Target / মোট প্যাকেজ:</span>
+                          <span className="text-slate-800 font-bold font-mono">
+                            {effectiveTargetStock} packs {invAssembled > 0 ? '(ইনভেন্টরি)' : ''}
+                          </span>
                         </div>
 
                         <div className="flex justify-between items-center text-[10px] text-slate-500 font-medium">
                           <span>Distributed Served:</span>
-                          <span className="text-amber-700 font-extrabold">{p.targetStockSize - p.remainingStock} packs</span>
+                          <span className="text-amber-700 font-extrabold font-mono">{effectiveTargetStock - effectiveRemainingStock} packs</span>
                         </div>
 
                         {/* Progress slider bar */}
@@ -375,11 +429,22 @@ export default function ProgramDirectory({
                         <div className="flex justify-between items-center gap-1.5 mt-2">
                           <button
                             onClick={() => setViewDetailsProgram(p)}
-                            className="bg-transparent hover:bg-slate-50 border border-slate-200 text-slate-650 font-semibold text-[10px] py-1.5 px-3 rounded-md flex items-center justify-center gap-1 cursor-pointer transition flex-1"
+                            className="bg-transparent hover:bg-slate-50 border border-slate-200 text-slate-650 font-semibold text-[10px] py-1.5 px-2 rounded-md flex items-center justify-center gap-1 cursor-pointer transition flex-1"
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            View Records
+                            View
                           </button>
+
+                          {onNavigateToInventory && (
+                            <button
+                              onClick={() => onNavigateToInventory(p.id)}
+                              className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] py-1.5 px-2 rounded-md flex items-center justify-center gap-1 cursor-pointer transition shadow-xs flex-1"
+                              title="ইনভেন্টরি ও মালামাল হিসাব পরিচালনা করুন"
+                            >
+                              <Boxes className="w-3.5 h-3.5" />
+                              ইনভেন্টরি
+                            </button>
+                          )}
 
                           {!isDonor && (
                             <button
@@ -391,7 +456,7 @@ export default function ProgramDirectory({
                                 setPackageCount(1); // Set to 1 as initial desk open default
                                 setActiveTab('desk');
                               }}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] py-1.5 px-3 rounded-md flex items-center justify-center gap-1 cursor-pointer shadow-sm transition flex-1"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] py-1.5 px-2 rounded-md flex items-center justify-center gap-1 cursor-pointer shadow-sm transition flex-1"
                             >
                               <ClipboardList className="w-3.5 h-3.5" />
                               Active Desk
@@ -742,7 +807,7 @@ export default function ProgramDirectory({
       {/* 3. Global parameters popups view */}
       {viewDetailsProgram && (
         <div className="bg-slate-900/40 backdrop-blur-sm fixed inset-0 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-sm w-full p-6 relative">
+          <div className="bg-white rounded-3xl shadow-xl border border-slate-200 max-w-lg w-full p-6 relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setViewDetailsProgram(null)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold border border-slate-200 rounded-full w-7 h-7 flex items-center justify-center hover:bg-slate-50 cursor-pointer"
@@ -777,12 +842,77 @@ export default function ProgramDirectory({
                 <span className="col-span-7 font-medium text-slate-850">{getDonorNames(viewDetailsProgram.donors)}</span>
               </div>
               <div className="grid grid-cols-12 gap-1 py-1">
-                <span className="col-span-5 font-bold text-amber-700">Inventory Left:</span>
+                <span className="col-span-5 font-bold text-amber-700">Inventory Packages:</span>
                 <span className="col-span-7 font-bold text-slate-850 font-mono">
-                  {viewDetailsProgram.remainingStock} of {viewDetailsProgram.targetStockSize} bags ({Math.round((viewDetailsProgram.remainingStock / viewDetailsProgram.targetStockSize) * 100)}%)
+                  {viewDetailsProgram.remainingStock} of {viewDetailsProgram.targetStockSize} packs remaining ({Math.round((viewDetailsProgram.remainingStock / (viewDetailsProgram.targetStockSize || 1)) * 100)}%)
                 </span>
               </div>
             </div>
+
+            {/* Inventory Packages Breakdown in Details Modal */}
+            {viewDetailsProgram.inventoryPackages && viewDetailsProgram.inventoryPackages.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h5 className="text-[10px] font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1">
+                    <Boxes className="w-3.5 h-3.5 text-amber-600" />
+                    প্যাকেজ রেসিপি ও উপাদান (Packages Composition)
+                  </h5>
+                  {onNavigateToInventory && (
+                    <button
+                      onClick={() => {
+                        const id = viewDetailsProgram.id;
+                        setViewDetailsProgram(null);
+                        onNavigateToInventory(id);
+                      }}
+                      className="text-[10px] text-amber-700 hover:underline font-bold cursor-pointer"
+                    >
+                      ইনভেন্টরি ডেস্কে খুলুন &rarr;
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {viewDetailsProgram.inventoryPackages.map(pkg => (
+                    <div key={pkg.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-slate-800">{pkg.name}</span>
+                        <span className="bg-amber-100 text-amber-800 text-[10px] font-mono font-bold px-2 py-0.5 rounded">
+                          {pkg.assembledQuantity} টি প্যাক প্রস্তুত
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 space-y-0.5">
+                        {pkg.items.map((i, idx) => (
+                          <div key={idx} className="flex justify-between font-mono">
+                            <span>• {i.itemName}:</span>
+                            <span className="font-bold text-indigo-700">{i.quantityPerPackage} {i.unit}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Raw items snapshot in Details modal */}
+            {viewDetailsProgram.inventoryItems && viewDetailsProgram.inventoryItems.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <h5 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  গুদামে কাঁচামাল প্রাপ্তি ও স্টক (Raw Items Stock)
+                </h5>
+                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                  {viewDetailsProgram.inventoryItems.map(item => {
+                    const avail = Math.max(0, item.totalReceived - item.allocatedToPackages);
+                    return (
+                      <div key={item.id} className="bg-slate-50 p-2 rounded-lg border border-slate-100 flex justify-between">
+                        <span className="text-slate-700 truncate mr-1">{item.name}:</span>
+                        <span className="font-bold text-emerald-700 shrink-0">{avail} {item.unit} বাকি</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="mt-5">
               <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-2 tracking-wider">

@@ -82,10 +82,64 @@ export function exportAllToExcel(
   const usersData = users.map(u => ({
     "Account Registry UID": u.id,
     "Profile Display Username": u.name,
-    "System Clearance Authorized Role": u.role === 'SuperAdmin' ? 'Super Admin' : u.role === 'FieldAdmin' ? 'Field Staff Officer' : 'Direct Donor'
+    "System Clearance Authorized Role": u.role === 'SuperAdmin' ? 'Super Admin' : u.role === 'FieldAdmin' ? 'Field Staff Officer' : u.role === 'InventoryManager' ? 'Inventory Manager' : 'Direct Donor'
   }));
   const wsUsers = XLSX.utils.json_to_sheet(usersData);
   XLSX.utils.book_append_sheet(wb, wsUsers, "System Accounts Directory");
+
+  // Tab 6: Inventory Raw Items (মালামাল স্টক তালিকা)
+  const allInventoryItems: any[] = [];
+  programs.forEach(p => {
+    (p.inventoryItems || []).forEach(item => {
+      const remainingInStore = Math.max(0, item.totalReceived - item.allocatedToPackages);
+      allInventoryItems.push({
+        "Program ID": p.id,
+        "Program Name": p.name,
+        "Item ID": item.id,
+        "Product / Item Name": item.name,
+        "Category": item.category || "General",
+        "Measurement Unit": item.unit,
+        "Total Received (মোট প্রাপ্ত)": item.totalReceived,
+        "Allocated in Packages (প্যাকেজে ব্যবহৃত)": item.allocatedToPackages,
+        "Remaining Raw Stock (গুদামে অবশিষ্ট)": remainingInStore,
+        "Notes": item.notes || ""
+      });
+    });
+  });
+  if (allInventoryItems.length > 0) {
+    const wsItems = XLSX.utils.json_to_sheet(allInventoryItems);
+    XLSX.utils.book_append_sheet(wb, wsItems, "Inventory Raw Items");
+  }
+
+  // Tab 7: Inventory Packages & Assembled Stock (প্যাকেজ ও স্টক হিসাব)
+  const allInventoryPackages: any[] = [];
+  programs.forEach(p => {
+    const distributedInProg = serviceRecords
+      .filter(sr => sr.programId === p.id)
+      .reduce((sum, sr) => sum + sr.packageCount, 0);
+
+    (p.inventoryPackages || []).forEach(pkg => {
+      const itemsBreakdown = pkg.items
+        .map(i => `${i.itemName} (${i.quantityPerPackage} ${i.unit})`)
+        .join("; ");
+
+      allInventoryPackages.push({
+        "Program ID": p.id,
+        "Program Name": p.name,
+        "Package ID": pkg.id,
+        "Package Bundle Name": pkg.name,
+        "Description": pkg.description || "",
+        "Constituent Items (প্যাকেজের পণ্য তালিকা)": itemsBreakdown,
+        "Total Assembled Packs (প্রস্তুতকৃত প্যাকেজ)": pkg.assembledQuantity,
+        "Program Distributed Portions (বিতরণকৃত)": distributedInProg,
+        "Available Remaining Packages (বিতরণযোগ্য অবশিষ্ট)": Math.max(0, pkg.assembledQuantity - distributedInProg)
+      });
+    });
+  });
+  if (allInventoryPackages.length > 0) {
+    const wsPkgs = XLSX.utils.json_to_sheet(allInventoryPackages);
+    XLSX.utils.book_append_sheet(wb, wsPkgs, "Inventory Packages");
+  }
 
   XLSX.writeFile(wb, `MWO_Aid_Distribution_Records_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }

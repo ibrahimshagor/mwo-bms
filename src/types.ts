@@ -1,10 +1,54 @@
-export type UserRole = 'SuperAdmin' | 'FieldAdmin' | 'Donor';
+export type UserRole = 'SuperAdmin' | 'FieldAdmin' | 'InventoryManager' | 'Donor';
+
+export interface UserPermissions {
+  canManageInventory?: boolean;      // Can access inventory dashboard
+  canAddInventoryItems?: boolean;   // Can add items & stock-in
+  canCreatePackages?: boolean;      // Can design package composition/recipes
+  canAssemblePackages?: boolean;    // Can assemble and pack goods
+  canDisassemblePackages?: boolean; // Can unpack goods back to store
+  canDistributePackages?: boolean;  // Can serve beneficiaries in distribution desk
+  canManagePrograms?: boolean;      // Can create and edit programs
+  canManageBeneficiaries?: boolean; // Can register beneficiaries
+}
 
 export interface User {
   id: string; // Auto-generated/manual ID, editable
   name: string;
   role: UserRole;
   password?: string; // Stored to simulate local login & changes
+  permissions?: UserPermissions;
+}
+
+export interface InventoryItem {
+  id: string; // e.g. "ITEM-1001"
+  programId: string;
+  name: string; // e.g. "ব্লাঙ্কেট / Blanket", "জ্যাকেট / Jacket", "চাল / Rice", "সয়াবিন তেল / Oil"
+  category?: string; // e.g. "শীতবস্ত্র", "খাদ্যপণ্য", "স্যানিটেশন সামগ্রী", "অন্যান্য"
+  unit: string; // e.g. "পিস (Pcs)", "কেজি (Kg)", "লিটার (Liter)", "প্যাকেট (Pkt)", "জোড়া (Pair)"
+  totalReceived: number; // মোট প্রাপ্ত মালামাল
+  allocatedToPackages: number; // প্যাকেজ বানাতে ব্যবহৃত পরিমাণ
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PackageItemRequirement {
+  itemId: string; // references InventoryItem.id
+  itemName: string; // display snapshot
+  quantityPerPackage: number; // ১টি প্যাকেজে কতটুকু লাগবে
+  unit: string;
+}
+
+export interface InventoryPackage {
+  id: string; // e.g. "PKG-1001"
+  programId: string;
+  name: string; // e.g. "Winter Family Clothing Pack / শীতবস্ত্র ফ্যামিলি প্যাক"
+  description?: string;
+  items: PackageItemRequirement[]; // Constituent items for 1 package
+  assembledQuantity: number; // মোট কতটি প্যাকেজ প্রস্তুত করা হয়েছে
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type ProgramType =
@@ -36,6 +80,8 @@ export interface Program {
   programDuration: string;
   targetStockSize: number;
   remainingStock: number;
+  inventoryItems?: InventoryItem[];
+  inventoryPackages?: InventoryPackage[];
 }
 
 export type BeneficiaryType = 'General' | 'Orphan' | 'Widow' | 'Disable';

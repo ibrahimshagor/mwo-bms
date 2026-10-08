@@ -2,13 +2,56 @@ import { User, Program, Beneficiary, ServiceRecord } from './types';
 
 // Default system-admin, staff, and donor credentials
 export const DEFAULT_USERS: User[] = [
-  { id: 'admin', name: 'Md. Ibrahim Hossain', role: 'SuperAdmin' },
-  { id: 'field1', name: 'Field Admin Shagor', role: 'FieldAdmin' },
+  { 
+    id: 'admin', 
+    name: 'Md. Ibrahim Hossain', 
+    role: 'SuperAdmin',
+    permissions: {
+      canManageInventory: true,
+      canAddInventoryItems: true,
+      canCreatePackages: true,
+      canAssemblePackages: true,
+      canDisassemblePackages: true,
+      canDistributePackages: true,
+      canManagePrograms: true,
+      canManageBeneficiaries: true,
+    }
+  },
+  { 
+    id: 'inventory1', 
+    name: 'Tareq Rahman (Store Keeper)', 
+    role: 'InventoryManager',
+    permissions: {
+      canManageInventory: true,
+      canAddInventoryItems: true,
+      canCreatePackages: true,
+      canAssemblePackages: true,
+      canDisassemblePackages: true,
+      canDistributePackages: false,
+      canManagePrograms: false,
+      canManageBeneficiaries: false,
+    }
+  },
+  { 
+    id: 'field1', 
+    name: 'Field Admin Shagor', 
+    role: 'FieldAdmin',
+    permissions: {
+      canManageInventory: true,
+      canAddInventoryItems: true,
+      canCreatePackages: false,
+      canAssemblePackages: true,
+      canDisassemblePackages: false,
+      canDistributePackages: true,
+      canManagePrograms: false,
+      canManageBeneficiaries: true,
+    }
+  },
   { id: 'donor1', name: 'Mr. ABC (Donor)', role: 'Donor' },
   { id: 'donor2', name: 'Al-Khair Trust', role: 'Donor' }
 ];
 
-// Seed initial distributions programs
+// Seed initial distributions programs with rich dynamic inventory
 export const DEFAULT_PROGRAMS: Program[] = [
   {
     id: 'MWO-PRG-1001',
@@ -19,7 +62,33 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDate: '2026-11-15',
     programDuration: '2 Weeks',
     targetStockSize: 500,
-    remainingStock: 497
+    remainingStock: 497,
+    inventoryItems: [
+      { id: 'ITEM-101', programId: 'MWO-PRG-1001', name: 'ব্লাঙ্কেট (Heavy Blanket)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 600, allocatedToPackages: 500, notes: 'তুর্কি ফ্লিস ডাবল লেয়ার' },
+      { id: 'ITEM-102', programId: 'MWO-PRG-1001', name: 'উইন্টার জ্যাকেট (Jacket)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 550, allocatedToPackages: 500, notes: 'ওয়াটারপ্রুফ প্যাডেড' },
+      { id: 'ITEM-103', programId: 'MWO-PRG-1001', name: 'উলের সোয়েটার (Woolen Sweater)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 520, allocatedToPackages: 500 },
+      { id: 'ITEM-104', programId: 'MWO-PRG-1001', name: 'উষ্ণ কাশ্মীরি শাল (Warm Shawl)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 500, allocatedToPackages: 500 },
+      { id: 'ITEM-105', programId: 'MWO-PRG-1001', name: 'উলের গ্লাভস (Winter Gloves)', category: 'শীতবস্ত্র', unit: 'জোড়া (Pair)', totalReceived: 550, allocatedToPackages: 500 },
+      { id: 'ITEM-106', programId: 'MWO-PRG-1001', name: 'মাফলার (Woolen Muffler)', category: 'শীতবস্ত্র', unit: 'পিস (Pcs)', totalReceived: 500, allocatedToPackages: 500 },
+      { id: 'ITEM-107', programId: 'MWO-PRG-1001', name: 'বেবি উইন্টার স্যুট (Baby Winter Set)', category: 'শিশুপণ্য', unit: 'সেট (Set)', totalReceived: 200, allocatedToPackages: 0, notes: 'অতিরিক্ত রিজার্ভ স্টক' }
+    ],
+    inventoryPackages: [
+      {
+        id: 'PKG-1001',
+        programId: 'MWO-PRG-1001',
+        name: 'Winter Warmth Family Pack (শীতকালীন পোশাক ফ্যামিলি প্যাক)',
+        description: '১টি ব্লাঙ্কেট + ১টি জ্যাকেট + ১টি সোয়েটার + ১টি শাল + ১ জোড়া গ্লাভস + ১টি মাফলার সমন্বিত পূর্ণাঙ্গ কম্বাইন্ড ফ্যামিলি প্যাক',
+        items: [
+          { itemId: 'ITEM-101', itemName: 'ব্লাঙ্কেট (Heavy Blanket)', quantityPerPackage: 1, unit: 'পিস (Pcs)' },
+          { itemId: 'ITEM-102', itemName: 'উইন্টার জ্যাকেট (Jacket)', quantityPerPackage: 1, unit: 'পিস (Pcs)' },
+          { itemId: 'ITEM-103', itemName: 'উলের সোয়েটার (Woolen Sweater)', quantityPerPackage: 1, unit: 'পিস (Pcs)' },
+          { itemId: 'ITEM-104', itemName: 'উষ্ণ কাশ্মীরি শাল (Warm Shawl)', quantityPerPackage: 1, unit: 'পিস (Pcs)' },
+          { itemId: 'ITEM-105', itemName: 'উলের গ্লাভস (Winter Gloves)', quantityPerPackage: 1, unit: 'জোড়া (Pair)' },
+          { itemId: 'ITEM-106', itemName: 'মাফলার (Woolen Muffler)', quantityPerPackage: 1, unit: 'পিস (Pcs)' }
+        ],
+        assembledQuantity: 500
+      }
+    ]
   },
   {
     id: 'MWO-PRG-1002',
@@ -30,7 +99,28 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDate: '2026-05-10',
     programDuration: '3 Months',
     targetStockSize: 1200,
-    remainingStock: 1200
+    remainingStock: 1200,
+    inventoryItems: [
+      { id: 'ITEM-201', programId: 'MWO-PRG-1002', name: 'অ্যান্টিসেপটিক সাবান (Soap)', category: 'হাইজিন', unit: 'পিস (Pcs)', totalReceived: 4800, allocatedToPackages: 4800 },
+      { id: 'ITEM-202', programId: 'MWO-PRG-1002', name: 'ডিটারজেন্ট পাউডার (Detergent 1kg)', category: 'হাইজিন', unit: 'প্যাকেট (Pkt)', totalReceived: 1500, allocatedToPackages: 1200 },
+      { id: 'ITEM-203', programId: 'MWO-PRG-1002', name: 'ওয়াটার পিউরিফায়ার ট্যাবলেট (Aqua Tabs)', category: 'স্যানিটেশন', unit: 'স্ট্রিপ (Strip)', totalReceived: 3600, allocatedToPackages: 2400 },
+      { id: 'ITEM-204', programId: 'MWO-PRG-1002', name: 'স্যানিটারি ন্যাপকিন (Pads)', category: 'হাইজিন', unit: 'প্যাক (Pack)', totalReceived: 2400, allocatedToPackages: 2400 }
+    ],
+    inventoryPackages: [
+      {
+        id: 'PKG-2001',
+        programId: 'MWO-PRG-1002',
+        name: 'Family Hygiene WASH Kit (হাইজিন ওয়াশ কিট)',
+        description: '৪টি সাবান + ১টি ডিটারজেন্ট + ২ স্ট্রিপ পিউরিফায়ার ট্যাবলেট + ২ প্যাক স্যানিটারি ন্যাপকিন',
+        items: [
+          { itemId: 'ITEM-201', itemName: 'অ্যান্টিসেপটিক সাবান (Soap)', quantityPerPackage: 4, unit: 'পিস (Pcs)' },
+          { itemId: 'ITEM-202', itemName: 'ডিটারজেন্ট পাউডার (Detergent 1kg)', quantityPerPackage: 1, unit: 'প্যাকেট (Pkt)' },
+          { itemId: 'ITEM-203', itemName: 'ওয়াটার পিউরিফায়ার ট্যাবলেট (Aqua Tabs)', quantityPerPackage: 2, unit: 'স্ট্রিপ (Strip)' },
+          { itemId: 'ITEM-204', itemName: 'স্যানিটারি ন্যাপকিন (Pads)', quantityPerPackage: 2, unit: 'প্যাক (Pack)' }
+        ],
+        assembledQuantity: 1200
+      }
+    ]
   },
   {
     id: 'MWO-PRG-1003',
@@ -41,7 +131,32 @@ export const DEFAULT_PROGRAMS: Program[] = [
     programDate: '2026-06-12',
     programDuration: '1 Day',
     targetStockSize: 300,
-    remainingStock: 298
+    remainingStock: 298,
+    inventoryItems: [
+      { id: 'ITEM-301', programId: 'MWO-PRG-1003', name: 'মিনিকেট চাল (Miniket Rice)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 3500, allocatedToPackages: 3000, notes: '৫০ কেজি বস্তা মোট ৭০টি' },
+      { id: 'ITEM-302', programId: 'MWO-PRG-1003', name: 'গম/আটা (Flour/Atta)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 1800, allocatedToPackages: 1500 },
+      { id: 'ITEM-303', programId: 'MWO-PRG-1003', name: 'ফর্টিফাইড সয়াবিন তেল (Soybean Oil)', category: 'খাদ্যপণ্য', unit: 'লিটার (Liter)', totalReceived: 700, allocatedToPackages: 600 },
+      { id: 'ITEM-304', programId: 'MWO-PRG-1003', name: 'সাদা চিনি (Refined Sugar)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 700, allocatedToPackages: 600 },
+      { id: 'ITEM-305', programId: 'MWO-PRG-1003', name: 'আয়োডিনযুক্ত লবণ (Iodized Salt)', category: 'খাদ্যপণ্য', unit: 'প্যাকেট (Pkt)', totalReceived: 700, allocatedToPackages: 300 },
+      { id: 'ITEM-306', programId: 'MWO-PRG-1003', name: 'মসুর ডাল (Red Lentils)', category: 'খাদ্যপণ্য', unit: 'কেজি (Kg)', totalReceived: 700, allocatedToPackages: 600 }
+    ],
+    inventoryPackages: [
+      {
+        id: 'PKG-3001',
+        programId: 'MWO-PRG-1003',
+        name: 'Standard Family Food Basket (স্ট্যান্ডার্ড খাদ্য সহায়তা প্যাক)',
+        description: '১০ কেজি চাল + ৫ কেজি আটা + ২ লিটার তেল + ২ কেজি চিনি + ১ প্যাকেট লবণ + ২ কেজি মসুর ডাল',
+        items: [
+          { itemId: 'ITEM-301', itemName: 'মিনিকেট চাল (Miniket Rice)', quantityPerPackage: 10, unit: 'কেজি (Kg)' },
+          { itemId: 'ITEM-302', itemName: 'গম/আটা (Flour/Atta)', quantityPerPackage: 5, unit: 'কেজি (Kg)' },
+          { itemId: 'ITEM-303', itemName: 'ফর্টিফাইড সয়াবিন তেল (Soybean Oil)', quantityPerPackage: 2, unit: 'লিটার (Liter)' },
+          { itemId: 'ITEM-304', itemName: 'সাদা চিনি (Refined Sugar)', quantityPerPackage: 2, unit: 'কেজি (Kg)' },
+          { itemId: 'ITEM-305', itemName: 'আয়োডিনযুক্ত লবণ (Iodized Salt)', quantityPerPackage: 1, unit: 'প্যাকেট (Pkt)' },
+          { itemId: 'ITEM-306', itemName: 'মসুর ডাল (Red Lentils)', quantityPerPackage: 2, unit: 'কেজি (Kg)' }
+        ],
+        assembledQuantity: 300
+      }
+    ]
   }
 ];
 

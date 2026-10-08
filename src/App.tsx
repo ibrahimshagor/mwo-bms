@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { User, Program, Beneficiary, ServiceRecord, UserRole } from './types';
+import { User, Program, Beneficiary, ServiceRecord, UserRole, InventoryItem, InventoryPackage } from './types';
 import { 
   DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS,
   getSavedState, saveState 
@@ -72,12 +72,14 @@ import BeneficiaryDirectory from './components/BeneficiaryDirectory';
 import BiometricVerificationDesk from './components/BiometricVerificationDesk';
 import Footer from './components/Footer';
 import ExportControlPanel from './components/ExportControlPanel';
+import InventoryDesk from './components/InventoryDesk';
 
 // Icons
 import { 
   FolderLock, UserCog, ClipboardList, Users, ShieldAlert, KeyRound, 
   Settings, LogOut, CheckCircle, Database, HelpCircle, ArrowRight,
-  TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X, Scan, ArrowLeft
+  TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X, Scan, ArrowLeft,
+  Boxes, ChevronDown
 } from 'lucide-react';
 
 export default function App() {
@@ -88,14 +90,19 @@ export default function App() {
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(() => getSavedState('mwo_beneficiaries', DEFAULT_BENEFICIARIES));
   const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>(() => getSavedState('mwo_service_records', DEFAULT_SERVICE_RECORDS));
 
-  // Dynamic programs mapper to make sure remainingStock is ALWAYS 100% accurate based on serviceRecords which is the single source of truth!
+  // Dynamic programs mapper to make sure remainingStock is ALWAYS 100% accurate based on serviceRecords & inventory packages!
   const enrichedPrograms = programs.map(p => {
     const distributed = serviceRecords
       .filter(sr => sr.programId === p.id)
       .reduce((sum, sr) => sum + sr.packageCount, 0);
+
+    const totalAssembled = (p.inventoryPackages || []).reduce((sum, pkg) => sum + pkg.assembledQuantity, 0);
+    const targetStock = (p.inventoryPackages && p.inventoryPackages.length > 0) ? totalAssembled : p.targetStockSize;
+
     return {
       ...p,
-      remainingStock: p.targetStockSize - distributed
+      targetStockSize: targetStock,
+      remainingStock: Math.max(0, targetStock - distributed)
     };
   });
 
@@ -117,16 +124,21 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [previousTab, setPreviousTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
 
   const navigateToTab = (tab: string) => {
     setPreviousTab(activeTab);
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
+    setIsLeftSidebarOpen(false);
+    setIsProfileDropdownOpen(false);
   };
   
   // Editing states (Forms overlays controllers)
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
   const [editingBeneficiary, setEditingBeneficiary] = useState<Beneficiary | null>(null);
+  const [selectedInventoryProgramId, setSelectedInventoryProgramId] = useState<string | null>(null);
 
   // Secret developer/admin bypass portal state
   const [showBypassPortal, setShowBypassPortal] = useState(false);
@@ -441,10 +453,13 @@ export default function App() {
       // Mock validation checking (accept simple local bypass, or match standard predefined pass checks)
       const matchesCategory = 
         (loginRoleSelect === 'Donor' && match.role === 'Donor') ||
-        (loginRoleSelect === 'Staff' && (match.role === 'SuperAdmin' || match.role === 'FieldAdmin'));
+        (loginRoleSelect === 'Staff' && (match.role === 'SuperAdmin' || match.role === 'FieldAdmin' || match.role === 'InventoryManager'));
 
       if (matchesCategory) {
         setCurrentUser(match);
+        if (match.role === 'InventoryManager') {
+          setActiveTab('inventory');
+        }
         try {
           localStorage.setItem('mwo_current_user', JSON.stringify(match));
         } catch (e) {
@@ -950,6 +965,14 @@ export default function App() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => handleBypassLogin('inventory1')}
+                  className="w-full bg-amber-600 hover:bg-amber-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md flex justify-between items-center cursor-pointer border-none"
+                >
+                  <span>Inventory Manager Account</span>
+                  <span className="bg-amber-800 text-[9px] px-2 py-0.5 rounded font-mono">STORE</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleBypassLogin('field1')}
                   className="w-full bg-sky-600 hover:bg-sky-500 text-white font-extrabold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md flex justify-between items-center cursor-pointer border-none"
                 >
@@ -1070,254 +1093,367 @@ export default function App() {
         /* ==================== AUTHENTICATED SYSTEM SHELL ==================== */
         <>
           {/* HEADER NAV LINK BAR */}
-          <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm leading-none">
-            <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs leading-none">
+            <div className="max-w-7xl mx-auto px-4 py-2.5 flex justify-between items-center gap-3">
               
-              {/* Header Left Logo branding */}
-              <div className="flex items-center gap-2 cursor-pointer" onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }}>
-                <img 
-                  src={getBasePath() + '/mwo-logo.svg'} 
-                  alt="MWO Logo" 
-                  className="h-8 md:h-9 object-contain select-none"
-                />
-              </div>
-
-              {/* Desktop Only Navigation elements */}
-              <nav className="hidden lg:flex items-center gap-1.5 lg:gap-2">
+              {/* Header Left: Hamburger Menu Button + Logo */}
+              <div className="flex items-center gap-3">
+                {/* Left Hamburger Drawer Trigger (Desktop & Mobile) */}
                 <button
+                  onClick={() => setIsLeftSidebarOpen(true)}
+                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer flex items-center justify-center focus:outline-none hover:shadow-xs active:scale-95"
+                  title="মেনু খুলুন (Navigation Menu)"
+                  aria-label="Open Sidebar Menu"
+                >
+                  <Menu className="w-5 h-5 text-slate-800" />
+                </button>
+
+                {/* Organization Logo & Title */}
+                <div 
+                  className="flex items-center gap-2.5 cursor-pointer select-none" 
                   onClick={() => navigateToTab('dashboard')}
-                  className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                    activeTab === 'dashboard' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                  }`}
                 >
-                  Home Dashboard
-                </button>
-
-                {/* Direct Biometric Scanner tab in Menu */}
-                <button
-                  onClick={() => navigateToTab('biometrics')}
-                  className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition ${
-                    activeTab === 'biometrics' 
-                      ? 'bg-emerald-600 text-white shadow-sm' 
-                      : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                  }`}
-                  title="Open real-time biometric face scanner desk"
-                >
-                  <Scan className="w-3.5 h-3.5" />
-                  <span>Face Biometrics</span>
-                </button>
-
-                {/* Sub Directories available to Staff (Super/Field Admin) */}
-                {!isDonor && (
-                  <>
-                    <button
-                      onClick={() => navigateToTab('beneficiaries')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      Beneficiaries Global Directory
-                    </button>
-                    <button
-                      onClick={() => navigateToTab('programs')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      Drives Program
-                    </button>
-                  </>
-                )}
-
-                {/* Directory structures for Donors */}
-                {isDonor && (
-                  <>
-                    <button
-                      onClick={() => navigateToTab('beneficiaries')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      Program Beneficiary view
-                    </button>
-                    <button
-                      onClick={() => navigateToTab('programs')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      Endorsed Programs Directory
-                    </button>
-                  </>
-                )}
-
-                {/* Exclusive Admin management fields */}
-                {isSuperAdmin && (
-                  <>
-                    <button
-                      onClick={() => navigateToTab('users')}
-                      className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                        activeTab === 'users' ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      User Accounts Management
-                    </button>
-                  </>
-                )}
-
-                <button
-                  onClick={() => navigateToTab('profile')}
-                  className={`text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer ${
-                    activeTab === 'profile' ? 'bg-emerald-50 text-emerald-800' : 'text-slate-500 hover:bg-slate-50'
-                  }`}
-                >
-                  Setting Profile
-                </button>
-              </nav>
-
-              {/* Header Right navigation options */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono font-bold text-slate-400 hidden lg:block bg-slate-100 px-2 py-1 rounded">
-                  Auth: {currentUser.name} ({currentUser.role})
-                </span>
-
-                {/* Logout button */}
-                <button
-                  onClick={handleLogout}
-                  className="hidden sm:flex bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-600 p-2 rounded-lg transition cursor-pointer items-center justify-center"
-                  title="Logout security session"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-
-                {/* Hamburger Switch for Mobile Menu */}
-                <button
-                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                  className="lg:hidden bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-lg transition cursor-pointer flex items-center justify-center focus:outline-none"
-                  aria-label="Toggle Navigation Menu"
-                >
-                  {isMobileMenuOpen ? <X className="w-5 h-5 text-slate-800" /> : <Menu className="w-5 h-5 text-slate-800" />}
-                </button>
-              </div>
-
-            </div>
-
-            {/* Mobile Responsive Menu Overlay / Dropdown with Smooth Height transition */}
-            {isMobileMenuOpen && (
-              <div className="lg:hidden border-t border-slate-200 bg-white shadow-lg animate-in fade-in slide-in-from-top-4 duration-200">
-                <div className="px-4 py-3 space-y-2">
-                  <div className="p-2.5 bg-slate-50 rounded-xl mb-3 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-mono">CURRENTLY LOGGED IN:</span>
-                      <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
-                    </div>
-                    <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                      {currentUser.role}
+                  <img 
+                    src={getBasePath() + '/mwo-logo.svg'} 
+                    alt="MWO Logo" 
+                    className="h-8 md:h-9 object-contain"
+                  />
+                  <div className="hidden sm:block leading-tight">
+                    <span className="font-black text-sm text-slate-900 tracking-tight block">
+                      MWO Relief Hub
                     </span>
-                  </div>
-
-                  <button
-                    onClick={() => { navigateToTab('dashboard'); setEditingBeneficiary(null); setEditingProgram(null); }}
-                    className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                      activeTab === 'dashboard' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>🏠</span> Home Dashboard
-                  </button>
-
-                  {/* Face Biometrics Fast Access Button in Mobile Menu */}
-                  <button
-                    onClick={() => navigateToTab('biometrics')}
-                    className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                      activeTab === 'biometrics' 
-                        ? 'bg-emerald-600 text-white shadow-sm' 
-                        : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                    }`}
-                  >
-                    <Scan className="w-4 h-4 text-emerald-600" />
-                    <span>⚡ Face Biometrics Scanner</span>
-                  </button>
-
-                  {/* Sub Directories available to Staff (Super/Field Admin) */}
-                  {!isDonor && (
-                    <>
-                      <button
-                        onClick={() => { navigateToTab('beneficiaries'); setEditingBeneficiary(null); }}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>👥</span> Beneficiaries Directory
-                      </button>
-                      <button
-                        onClick={() => { navigateToTab('programs'); setEditingProgram(null); }}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>📦</span> Drives Program
-                      </button>
-                    </>
-                  )}
-
-                  {/* Directory structures for Donors */}
-                  {isDonor && (
-                    <>
-                      <button
-                        onClick={() => navigateToTab('beneficiaries')}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'beneficiaries' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>👥</span> Program Beneficiary View
-                      </button>
-                      <button
-                        onClick={() => navigateToTab('programs')}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'programs' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>🌟</span> Endorsed Programs Directory
-                      </button>
-                    </>
-                  )}
-
-                  {/* Exclusive Admin management fields */}
-                  {isSuperAdmin && (
-                    <>
-                      <button
-                        onClick={() => navigateToTab('users')}
-                        className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                          activeTab === 'users' ? 'bg-slate-100 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>⚙️</span> User Accounts Management
-                      </button>
-                    </>
-                  )}
-
-                  <button
-                    onClick={() => navigateToTab('profile')}
-                    className={`w-full text-left font-bold text-xs p-2.5 rounded-xl transition flex items-center gap-2 ${
-                      activeTab === 'profile' ? 'bg-emerald-50 text-emerald-800' : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>👤</span> Setting Profile
-                  </button>
-
-                  {/* Log Out on Mobile */}
-                  <div className="pt-2 border-t border-slate-100">
-                    <button
-                      onClick={() => { setIsMobileMenuOpen(false); handleLogout(); }}
-                      className="w-full text-left font-bold text-xs p-2.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <span>🚪</span> Log Out Security Session
-                    </button>
+                    <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1.5 mt-0.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      মানবকল্যাণ সংস্থা
+                    </span>
                   </div>
                 </div>
               </div>
-            )}
+
+              {/* Header Middle: Quick Essential Action Icons & View Badge */}
+              <div className="flex items-center gap-2">
+                {/* Quick Face Biometrics Scanner shortcut */}
+                <button
+                  onClick={() => navigateToTab('biometrics')}
+                  className={`text-xs font-bold px-3 py-2 rounded-xl cursor-pointer flex items-center gap-1.5 transition active:scale-95 ${
+                    activeTab === 'biometrics' 
+                      ? 'bg-emerald-600 text-white shadow-xs' 
+                      : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60'
+                  }`}
+                  title="বায়োমেট্রিক ফেস স্ক্যানার ডেস্ক"
+                >
+                  <Scan className="w-4 h-4 text-emerald-600" />
+                  <span className="hidden md:inline">বায়োমেট্রিক স্ক্যান</span>
+                </button>
+
+                {/* Quick Inventory shortcut */}
+                {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
+                  <button
+                    onClick={() => {
+                      setSelectedInventoryProgramId(null);
+                      navigateToTab('inventory');
+                    }}
+                    className={`text-xs font-bold px-3 py-2 rounded-xl cursor-pointer flex items-center gap-1.5 transition active:scale-95 ${
+                      activeTab === 'inventory' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200/60'
+                    }`}
+                    title="রিলিফ প্রোগ্রামের ইনভেন্টরি ও গুদাম ডেস্ক"
+                  >
+                    <Boxes className="w-4 h-4 text-amber-700" />
+                    <span className="hidden md:inline">ইনভেন্টরি</span>
+                  </button>
+                )}
+
+                {/* Current Active Section Badge (Desktop) */}
+                <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-3 py-1.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                  <span className="text-slate-400">ভিউ:</span>
+                  <strong className="text-slate-800">
+                    {activeTab === 'dashboard' ? 'হোম ড্যাশবোর্ড' :
+                     activeTab === 'biometrics' ? 'বায়োমেট্রিক স্ক্যানার' :
+                     activeTab === 'beneficiaries' ? 'সুবিধাভোগী ডিরেক্টরি' :
+                     activeTab === 'programs' ? 'প্রোগ্রাম ও ড্রাইভ' :
+                     activeTab === 'inventory' ? 'ইনভেন্টরি ডেস্ক' :
+                     activeTab === 'users' ? 'ইউজার ম্যানেজমেন্ট' :
+                     activeTab === 'profile' ? 'প্রোফাইল সেটিংস' : activeTab}
+                  </strong>
+                </span>
+              </div>
+
+              {/* Header Right: Profile Avatar & Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                  className="flex items-center gap-2 p-1 sm:px-2.5 sm:py-1.5 rounded-xl hover:bg-slate-100 transition cursor-pointer border border-transparent hover:border-slate-200 active:scale-95"
+                  title="ইউজার প্রোফাইল ও সেটিংস"
+                >
+                  <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="hidden md:block text-left leading-tight">
+                    <div className="text-xs font-bold text-slate-800 truncate max-w-[120px]">{currentUser.name}</div>
+                    <div className="text-[9.5px] text-slate-400 font-mono">{currentUser.role}</div>
+                  </div>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isProfileDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Floating Profile Dropdown Menu */}
+                {isProfileDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsProfileDropdownOpen(false)} 
+                    />
+                    <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 z-50 p-2 text-xs animate-in fade-in zoom-in-95 duration-150">
+                      {/* User Info Header */}
+                      <div className="p-3 bg-slate-50 rounded-xl mb-2 border border-slate-100">
+                        <div className="font-bold text-slate-800 text-sm leading-snug">{currentUser.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">{currentUser.username || currentUser.id}</div>
+                        <span className="inline-block mt-2 text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
+                          {currentUser.role}
+                        </span>
+                      </div>
+
+                      {/* Dropdown Options */}
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => navigateToTab('profile')}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Settings className="w-4 h-4 text-slate-500" />
+                          <span>প্রোফাইল সেটিংস (Profile)</span>
+                        </button>
+
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => navigateToTab('users')}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
+                          >
+                            <UserCog className="w-4 h-4 text-purple-600" />
+                            <span>ইউজার ম্যানেজমেন্ট (Users)</span>
+                          </button>
+                        )}
+
+                        {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
+                          <button
+                            onClick={() => {
+                              setSelectedInventoryProgramId(null);
+                              navigateToTab('inventory');
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
+                          >
+                            <Boxes className="w-4 h-4 text-amber-600" />
+                            <span>ইনভেন্টরি ও গুদাম (Inventory)</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Logout Action */}
+                      <div className="border-t border-slate-100 my-1 pt-1">
+                        <button
+                          onClick={() => {
+                            setIsProfileDropdownOpen(false);
+                            handleLogout();
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 text-rose-600 font-bold flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <LogOut className="w-4 h-4 text-rose-500" />
+                          <span>লগআউট (Logout Session)</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+            </div>
           </header>
+
+          {/* ========================================================================= */}
+          {/* SLIDE-OUT LEFT NAVIGATION SIDEBAR DRAWER (FOR PC, LAPTOP, TABLET & MOBILE) */}
+          {/* ========================================================================= */}
+          {isLeftSidebarOpen && (
+            <div className="fixed inset-0 z-50 flex">
+              {/* Overlay Backdrop */}
+              <div 
+                className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+                onClick={() => setIsLeftSidebarOpen(false)}
+              />
+
+              {/* Sliding Drawer Container */}
+              <div className="relative w-80 max-w-[85vw] bg-slate-900 text-white shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-250 border-r border-slate-800">
+                {/* Drawer Header */}
+                <div className="p-5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
+                  <div className="flex items-center gap-3">
+                    <img 
+                      src={getBasePath() + '/mwo-logo.svg'} 
+                      alt="MWO Logo" 
+                      className="h-9 object-contain bg-white/10 p-1 rounded-xl"
+                    />
+                    <div>
+                      <h3 className="font-black text-sm text-white tracking-tight leading-tight">
+                        MWO Relief Hub
+                      </h3>
+                      <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+                        মানবকল্যাণ সংস্থা
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsLeftSidebarOpen(false)}
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                    title="মেনু বন্ধ করুন"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Drawer Menu Groups */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-6 text-xs">
+                  {/* Group 1: Core Operations */}
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
+                      মূল কার্যপ্রণালী (Operations)
+                    </span>
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => navigateToTab('dashboard')}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                          activeTab === 'dashboard' 
+                            ? 'bg-emerald-600 text-white shadow-md' 
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-base">🏠</span>
+                        <span>হোম ড্যাশবোর্ড (Dashboard)</span>
+                      </button>
+
+                      <button
+                        onClick={() => navigateToTab('biometrics')}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                          activeTab === 'biometrics' 
+                            ? 'bg-emerald-600 text-white shadow-md' 
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <Scan className="w-4 h-4 text-emerald-400" />
+                        <span>বায়োমেট্রিক ফেস স্ক্যানার (Scanner)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Group 2: Relief & Program Directories */}
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
+                      রিলিফ ও সাহায্য ডিরেক্টরি (Directories)
+                    </span>
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => navigateToTab('beneficiaries')}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                          activeTab === 'beneficiaries' 
+                            ? 'bg-emerald-600 text-white shadow-md' 
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <Users className="w-4 h-4 text-sky-400" />
+                        <span>সুবিধাভোগী ডিরেক্টরি (Beneficiaries)</span>
+                      </button>
+
+                      <button
+                        onClick={() => navigateToTab('programs')}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                          activeTab === 'programs' 
+                            ? 'bg-emerald-600 text-white shadow-md' 
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <ClipboardList className="w-4 h-4 text-amber-400" />
+                        <span>রিলিফ ড্রাইভ ও প্রোগ্রাম (Drives)</span>
+                      </button>
+
+                      {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
+                        <button
+                          onClick={() => {
+                            setSelectedInventoryProgramId(null);
+                            navigateToTab('inventory');
+                          }}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                            activeTab === 'inventory' 
+                              ? 'bg-amber-600 text-white shadow-md' 
+                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                        >
+                          <Boxes className="w-4 h-4 text-amber-400" />
+                          <span>ইনভেন্টরি ও গুদাম ডেস্ক (Inventory)</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Group 3: Admin & Settings */}
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
+                      সিস্টেম ও কনফিগারেশন (Settings)
+                    </span>
+                    <div className="space-y-1">
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => navigateToTab('users')}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                            activeTab === 'users' 
+                              ? 'bg-emerald-600 text-white shadow-md' 
+                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                        >
+                          <UserCog className="w-4 h-4 text-purple-400" />
+                          <span>ইউজার অ্যাকাউন্টস (User Accounts)</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => navigateToTab('profile')}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                          activeTab === 'profile' 
+                            ? 'bg-emerald-600 text-white shadow-md' 
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        <Settings className="w-4 h-4 text-slate-400" />
+                        <span>প্রোফাইল সেটিংস (My Profile)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom User Profile Card & Logout in Drawer */}
+                <div className="p-4 border-t border-slate-800/80 bg-slate-950/60">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                        {currentUser.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-white text-xs truncate">{currentUser.name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono uppercase">{currentUser.role}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsLeftSidebarOpen(false);
+                      handleLogout();
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-rose-900/50 hover:text-rose-300 text-slate-300 font-bold flex items-center justify-center gap-2 transition cursor-pointer text-xs"
+                  >
+                    <LogOut className="w-4 h-4 text-rose-400" />
+                    <span>লগআউট (Logout Session)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* MAIN PAGE RENDER PLATFORMS */}
           <main className="flex-grow max-w-7xl w-full mx-auto px-4 py-6">
@@ -1513,7 +1649,7 @@ service cloud.firestore {
                   beneficiaries={beneficiaries}
                   serviceRecords={serviceRecords}
                   users={users}
-                  title="Universal Dashboard Export & Live Sheets Sync Desk"
+                  title="Universal Dashboard Offline Data Export Desk (অফলাইন এক্সেল ব্যাকআপ)"
                 />
 
                 {/* Inline shortcuts panels directories */}
@@ -1734,6 +1870,56 @@ service cloud.firestore {
                 onSaveServiceRecord={handleSaveServiceRecord}
                 onRemoveServiceRecord={handleRemoveServiceRecord}
                 onUpdateServiceRecordPackageCount={handleUpdateServiceRecordPackageCount}
+                onNavigateToInventory={(pId) => {
+                  setSelectedInventoryProgramId(pId || null);
+                  setActiveTab('inventory');
+                }}
+              />
+            )}
+
+            {/* ====== 5.5 INVENTORY CONTROL DESK ====== */}
+            {activeTab === 'inventory' && (
+              <InventoryDesk
+                programs={enrichedPrograms}
+                currentUser={currentUser}
+                serviceRecords={serviceRecords}
+                initialProgramId={selectedInventoryProgramId}
+                onSelectProgramId={(pId) => setSelectedInventoryProgramId(pId)}
+                onUpdateProgramInventory={async (programId, invItems, invPackages) => {
+                  const updatedPrograms = programs.map(p => {
+                    if (p.id === programId) {
+                      const totalAssembled = invPackages.reduce((sum, pkg) => sum + pkg.assembledQuantity, 0);
+                      const distributed = serviceRecords
+                        .filter(sr => sr.programId === programId)
+                        .reduce((sum, sr) => sum + sr.packageCount, 0);
+
+                      return {
+                        ...p,
+                        inventoryItems: invItems,
+                        inventoryPackages: invPackages,
+                        targetStockSize: totalAssembled > 0 ? totalAssembled : p.targetStockSize,
+                        remainingStock: totalAssembled > 0 ? Math.max(0, totalAssembled - distributed) : p.remainingStock
+                      };
+                    }
+                    return p;
+                  });
+
+                  setPrograms(updatedPrograms);
+                  saveState('mwo_programs', updatedPrograms);
+
+                  // Sync to Firestore in background
+                  try {
+                    const targetProg = updatedPrograms.find(p => p.id === programId);
+                    if (targetProg) {
+                      await setDoc(doc(db, 'programs', programId), JSON.parse(JSON.stringify(targetProg)));
+                    }
+                  } catch (e: any) {
+                    console.warn("Firestore program inventory update warning:", e);
+                  }
+                }}
+                onNavigateToProgramDirectory={() => {
+                  setActiveTab('programs');
+                }}
               />
             )}
 
