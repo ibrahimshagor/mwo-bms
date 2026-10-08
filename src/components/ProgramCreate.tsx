@@ -1,12 +1,14 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { User, Program, ProgramType, BeneficiaryCommunity } from '../types';
-import { Layers, Save, Search, Check, FolderPlus, MapPin, Building2 } from 'lucide-react';
+import { User, Program, ProgramType, BeneficiaryCommunity, OfficeWarehouse } from '../types';
+import { Layers, Save, Search, Check, FolderPlus, MapPin, Building2, Warehouse, Plus } from 'lucide-react';
 
 interface ProgramCreateProps {
   donorsList: User[];
+  facilitiesList?: OfficeWarehouse[];
   onSave: (program: Program) => void;
   onCancel?: () => void;
   editingProgram?: Program | null;
+  onOpenCreateFacility?: () => void;
 }
 
 const PROGRAM_TYPES: ProgramType[] = [
@@ -25,9 +27,11 @@ const PROGRAM_TYPES: ProgramType[] = [
 
 export default function ProgramCreate({
   donorsList,
+  facilitiesList = [],
   onSave,
   onCancel,
-  editingProgram
+  editingProgram,
+  onOpenCreateFacility
 }: ProgramCreateProps) {
   const generateNewId = () => {
     const rNum = Math.floor(1000 + Math.random() * 9000);
@@ -43,11 +47,11 @@ export default function ProgramCreate({
   const [targetStockSize, setTargetStockSize] = useState<number>(100);
 
   // Warehouses / Storage management
-  const [warehouses, setWarehouses] = useState<string[]>(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
+  const [warehouses, setWarehouses] = useState<string[]>([]);
   const [newWarehouseInput, setNewWarehouseInput] = useState('');
 
-  // Distribution Locations / Areas management (বিতরণ এলাকা / অঞ্চল / বিতরণস্থল)
-  const [locations, setLocations] = useState<string[]>(['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
+  // Distribution Locations / Areas management (বিতরণ এলাকা / অঞ্চল) - starts empty
+  const [locations, setLocations] = useState<string[]>([]);
   const [newLocationInput, setNewLocationInput] = useState('');
 
   // Search & Multiple Donors variables
@@ -65,8 +69,8 @@ export default function ProgramCreate({
       setProgramDuration(editingProgram.programDuration);
       setTargetStockSize(editingProgram.targetStockSize);
       setSelectedDonors(editingProgram.donors || []);
-      setWarehouses(editingProgram.warehouses && editingProgram.warehouses.length > 0 ? editingProgram.warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
-      setLocations(editingProgram.locations && editingProgram.locations.length > 0 ? editingProgram.locations : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
+      setWarehouses(editingProgram.warehouses && editingProgram.warehouses.length > 0 ? editingProgram.warehouses : (facilitiesList.length > 0 ? [facilitiesList[0].name] : ['প্রধান গুদাম']));
+      setLocations(editingProgram.locations && editingProgram.locations.length > 0 ? [...editingProgram.locations] : []);
     } else {
       setId(generateNewId());
       setName('');
@@ -78,10 +82,10 @@ export default function ProgramCreate({
       setProgramDuration('1 Month');
       setTargetStockSize(250);
       setSelectedDonors([]);
-      setWarehouses(['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা']);
-      setLocations(['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প']);
+      setWarehouses(facilitiesList.length > 0 ? [facilitiesList[0].name] : ['প্রধান গুদাম']);
+      setLocations([]); // Clean and empty by default
     }
-  }, [editingProgram]);
+  }, [editingProgram, facilitiesList]);
 
   // Warehouse Helpers
   const addWarehouse = (whName: string) => {
@@ -95,7 +99,7 @@ export default function ProgramCreate({
 
   const removeWarehouse = (whName: string) => {
     if (warehouses.length <= 1) {
-      alert('অন্তত একটি গুদাম/লোকেশন থাকা আবশ্যক!');
+      alert('অন্তত একটি পরিচালনাকারী গুদাম বা অফিস নির্বাচন করা আবশ্যক!');
       return;
     }
     setWarehouses(warehouses.filter(w => w !== whName));
@@ -112,10 +116,6 @@ export default function ProgramCreate({
   };
 
   const removeLocation = (locName: string) => {
-    if (locations.length <= 1) {
-      alert('অন্তত একটি বিতরণ এলাকা বা অঞ্চল থাকা প্রয়োজন!');
-      return;
-    }
     setLocations(locations.filter(l => l !== locName));
   };
 
@@ -139,6 +139,7 @@ export default function ProgramCreate({
     if (!name.trim()) { setFormError('Program name is required.'); return; }
     if (selectedDonors.length === 0) { setFormError('Please select at least one donor for this program.'); return; }
     if (targetStockSize <= 0) { setFormError('Target distribution stock size must be greater than zero.'); return; }
+    if (warehouses.length === 0) { setFormError('Please select at least one warehouse or office for this program.'); return; }
 
     onSave({
       id: id.trim(),
@@ -152,8 +153,8 @@ export default function ProgramCreate({
       remainingStock: editingProgram 
         ? editingProgram.remainingStock + (targetStockSize - editingProgram.targetStockSize)
         : targetStockSize,
-      warehouses: warehouses.length > 0 ? warehouses : ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
-      locations: locations.length > 0 ? locations : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা'],
+      warehouses: warehouses.length > 0 ? warehouses : ['প্রধান গুদাম'],
+      locations: locations, // User's custom locations only
       inventoryItems: editingProgram?.inventoryItems,
       inventoryPackages: editingProgram?.inventoryPackages
     });
@@ -344,14 +345,28 @@ export default function ProgramCreate({
         </div>
 
         {/* WAREHOUSE / STORAGE LOCATIONS */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-0.5">
-              গুদাম ও ওয়্যারহাউস লোকেশন (Storage Warehouses)
-            </label>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              এই প্রোগ্রামের পণ্য ও প্যাকেজ কোন কোন গুদামে আলাদা আলাদা হিসাবে থাকবে তা নির্বাচন বা যুক্ত করুন।
-            </p>
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3.5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-0.5 flex items-center gap-1.5">
+                <Warehouse className="w-4 h-4 text-amber-600" />
+                <span>পরিচালনাকারী অফিস ও গুদাম (Storage Warehouses / Offices) *</span>
+              </label>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                কোন কোন গুদাম বা শাখা অফিস থেকে এই প্রোগ্রামের ত্রাণসামগ্রী পরিচালিত বা সরবরাহ করা হবে তা নির্বাচন করুন।
+              </p>
+            </div>
+
+            {onOpenCreateFacility && (
+              <button
+                type="button"
+                onClick={onOpenCreateFacility}
+                className="text-[11px] bg-white border border-amber-300 hover:border-amber-400 text-amber-800 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 transition cursor-pointer shrink-0 shadow-2xs hover:bg-amber-50"
+              >
+                <Plus className="w-3 h-3 text-amber-600" />
+                <span>নতুন গুদাম/অফিস তৈরি</span>
+              </button>
+            )}
           </div>
 
           {/* Active Warehouses Tags */}
@@ -359,14 +374,14 @@ export default function ProgramCreate({
             {warehouses.map((wh) => (
               <span
                 key={wh}
-                className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-emerald-300 text-emerald-800 text-xs font-bold rounded-lg shadow-2xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-amber-400 text-amber-900 text-xs font-bold rounded-lg shadow-2xs"
               >
                 <span>📍 {wh}</span>
                 <button
                   type="button"
                   onClick={() => removeWarehouse(wh)}
                   className="hover:bg-rose-100 text-rose-500 rounded p-0.5 transition cursor-pointer"
-                  title="গুদাম মুছে ফেলুন"
+                  title="গুদাম বাদ দিন"
                 >
                   &times;
                 </button>
@@ -374,31 +389,50 @@ export default function ProgramCreate({
             ))}
           </div>
 
-          {/* Common Presets */}
-          <div className="flex items-center gap-1.5 flex-wrap pt-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">প্রস্তাবিত লোকেশন:</span>
-            {['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা', 'ঢাকা', 'চট্টগ্রাম', 'সিলেট', 'রংপুর', 'রাজশাহী'].map((loc) => {
-              const isAdded = warehouses.includes(loc);
-              return (
-                <button
-                  key={loc}
-                  type="button"
-                  onClick={() => addWarehouse(loc)}
-                  disabled={isAdded}
-                  className={`text-[11px] px-2 py-0.5 rounded border transition cursor-pointer ${
-                    isAdded
-                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border-slate-200'
-                  }`}
-                >
-                  +{loc}
-                </button>
-              );
-            })}
-          </div>
+          {/* Registered Offices & Warehouses Selector */}
+          {facilitiesList.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t border-slate-200/80">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                নিবন্ধিত অফিস ও গুদাম তালিকা থেকে নির্বাচন করুন:
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {facilitiesList.map((fac) => {
+                  const isSelected = warehouses.includes(fac.name);
+                  return (
+                    <button
+                      key={fac.id}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          removeWarehouse(fac.name);
+                        } else {
+                          addWarehouse(fac.name);
+                        }
+                      }}
+                      className={`text-xs px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span>
+                        {fac.type === 'Warehouse' ? '🏭' : fac.type === 'Office' ? '🏢' : '🏛️'}
+                      </span>
+                      <span>{fac.name}</span>
+                      {isSelected ? (
+                        <Check className="w-3.5 h-3.5 text-white" />
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-mono">+যুক্ত</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Add Custom Warehouse Input */}
-          <div className="flex gap-2 pt-1">
+          <div className="flex gap-2 pt-1 border-t border-slate-200/80">
             <input
               type="text"
               value={newWarehouseInput}
@@ -409,36 +443,36 @@ export default function ProgramCreate({
                   addWarehouse(newWarehouseInput);
                 }
               }}
-              placeholder="কাস্টম গুদামের নাম লিখুন (যেমন: বরিশাল ওয়্যারহাউস)..."
+              placeholder="কাস্টম গুদাম বা অফিসের নাম লিখুন (যেমন: বরিশাল ওয়্যারহাউস)..."
               className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
             />
             <button
               type="button"
               onClick={() => addWarehouse(newWarehouseInput)}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
             >
               যোগ করুন
             </button>
           </div>
         </div>
 
-        {/* DISTRIBUTION LOCATIONS / AREAS (বিতরণ এলাকা / অঞ্চল / বিতরণস্থল) */}
+        {/* DISTRIBUTION LOCATIONS / AREAS (সম্পূর্ণ কাস্টমাইজেবল - কোনো হার্ডকোডেড তালিকা নেই) */}
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
           <div>
             <label className="block text-xs font-bold text-slate-800 mb-0.5 flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-emerald-600" />
-              <span>বিতরণ এলাকা / অঞ্চল / বিতরণস্থল (Distribution Locations / Areas) *</span>
+              <span>বিতরণ এলাকা / অঞ্চল (Distribution Locations / Areas)</span>
             </label>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              গুদাম থেকে পণ্য এনে কোন কোন নির্দিষ্ট এলাকা, ক্যাম্প বা অঞ্চলে বিতরণ করা হবে সেগুলোর তালিকা এখানে যুক্ত করুন (যেমন: উখিয়া ক্যাম্প ১২, টেকনাফ লেদা, ময়মনসিংহ সদর)। বিতরণ করার সময় এগুলো সরাসরি বিতরণস্থল ড্রপডাউন ও তালিকায় পাওয়া যাবে।
+              আপনার প্রয়োজন অনুযায়ী প্রোগ্রামটির বিতরণ এলাকা বা অঞ্চলের নাম নিচে লিখে যোগ করুন। বিতরণ করার সময় এই নির্দিষ্ট এলাকাগুলো সরাসরি তালিকায় প্রদর্শিত হবে।
             </p>
           </div>
 
           {/* Active Locations Tags */}
           <div className="flex flex-wrap gap-2">
             {locations.length === 0 ? (
-              <span className="text-xs text-amber-700 italic bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
-                ⚠️ কোনো এলাকা যুক্ত করা হয়নি। নিচে প্রস্তাবিত তালিকা থেকে ক্লিক করুন বা কাস্টম এলাকা লিখুন।
+              <span className="text-xs text-slate-500 italic bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                কোনো নির্দিষ্ট এলাকা সেট করা নেই। নিচে আপনার সুবিধামতো এলাকার নাম লিখে যোগ করুন।
               </span>
             ) : (
               locations.map((loc) => (
@@ -446,7 +480,7 @@ export default function ProgramCreate({
                   key={loc}
                   className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-emerald-300 text-emerald-900 text-xs font-bold rounded-lg shadow-2xs"
                 >
-                  <span>📍 {loc}</span>
+                  <span>🎯 {loc}</span>
                   <button
                     type="button"
                     onClick={() => removeLocation(loc)}
@@ -458,29 +492,6 @@ export default function ProgramCreate({
                 </span>
               ))
             )}
-          </div>
-
-          {/* Proposed Location Presets */}
-          <div className="flex items-center gap-1.5 flex-wrap pt-1">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">প্রস্তাবিত এলাকা:</span>
-            {['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'বালুখালী ক্যাম্প ৯', 'মধুছড়া ক্যাম্প ৪', 'ভাসানচর ক্যাম্প', 'ময়মনসিংহ সদর', 'ত্রিশাল', 'কক্সবাজার সদর'].map((locPreset) => {
-              const isAdded = locations.includes(locPreset);
-              return (
-                <button
-                  key={locPreset}
-                  type="button"
-                  onClick={() => addLocation(locPreset)}
-                  disabled={isAdded}
-                  className={`text-[11px] px-2 py-0.5 rounded border transition cursor-pointer ${
-                    isAdded
-                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                      : 'bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border-slate-200'
-                  }`}
-                >
-                  +{locPreset}
-                </button>
-              );
-            })}
           </div>
 
           {/* Add Custom Location Input */}
@@ -495,7 +506,7 @@ export default function ProgramCreate({
                   addLocation(newLocationInput);
                 }
               }}
-              placeholder="কাস্টম এলাকা বা অঞ্চলের নাম লিখুন (যেমন: টেকনাফ লেদা বা ময়মনসিংহ সদর)..."
+              placeholder="বিতরণ এলাকা বা অঞ্চলের নাম লিখুন (যেমন: ময়মনসিংহ সদর, ত্রিশাল, ঢাকা মিরপুর ইত্যাদি)..."
               className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
             />
             <button

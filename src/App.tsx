@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { User, Program, Beneficiary, ServiceRecord, UserRole, InventoryItem, InventoryPackage } from './types';
+import { User, Program, Beneficiary, ServiceRecord, UserRole, InventoryItem, InventoryPackage, OfficeWarehouse } from './types';
 import { 
-  DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS,
+  DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS, DEFAULT_OFFICE_WAREHOUSES,
   getSavedState, saveState 
 } from './data';
 import { 
@@ -73,24 +73,28 @@ import BiometricVerificationDesk from './components/BiometricVerificationDesk';
 import Footer from './components/Footer';
 import ExportControlPanel from './components/ExportControlPanel';
 import InventoryDesk from './components/InventoryDesk';
+import OfficeWarehouseManagement from './components/OfficeWarehouseManagement';
 
 // Icons
 import { 
   FolderLock, UserCog, ClipboardList, Users, ShieldAlert, KeyRound, 
   Settings, LogOut, CheckCircle, Database, HelpCircle, ArrowRight,
   TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X, Scan, ArrowLeft,
-  Boxes, ChevronDown
+  Boxes, ChevronDown, Building2, Warehouse, Languages, Globe
 } from 'lucide-react';
+import { useLanguage } from './context/LanguageContext';
 
 export default function App() {
+  const { language, toggleLanguage, t, isEn, isBn } = useLanguage();
   
   // 1. Core State databases (Automatically loaded from localStorage or default seed data)
   const [users, setUsers] = useState<User[]>(() => getSavedState('mwo_users', DEFAULT_USERS));
   const [programs, setPrograms] = useState<Program[]>(() => getSavedState('mwo_programs', DEFAULT_PROGRAMS));
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(() => getSavedState('mwo_beneficiaries', DEFAULT_BENEFICIARIES));
   const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>(() => getSavedState('mwo_service_records', DEFAULT_SERVICE_RECORDS));
+  const [facilities, setFacilities] = useState<OfficeWarehouse[]>(() => getSavedState('mwo_facilities', DEFAULT_OFFICE_WAREHOUSES));
 
-  // Dynamic programs mapper to make sure remainingStock & locations are ALWAYS 100% accurate based on serviceRecords & inventory packages!
+  // Dynamic programs mapper to make sure remainingStock & locations are ALWAYS accurate based on serviceRecords & inventory packages!
   const enrichedPrograms = programs.map(p => {
     const distributed = serviceRecords
       .filter(sr => sr.programId === p.id)
@@ -99,15 +103,9 @@ export default function App() {
     const totalAssembled = (p.inventoryPackages || []).reduce((sum, pkg) => sum + pkg.assembledQuantity, 0);
     const targetStock = (p.inventoryPackages && p.inventoryPackages.length > 0) ? totalAssembled : p.targetStockSize;
 
-    // Ensure locations exist for program (if missing from older localStorage)
-    const defaultLocs = DEFAULT_PROGRAMS.find(dp => dp.id === p.id)?.locations;
-    const finalLocations = (p.locations && p.locations.length > 0)
-      ? p.locations
-      : (defaultLocs || (p.warehouses && p.warehouses.length > 0 ? p.warehouses : ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা']));
-
     return {
       ...p,
-      locations: finalLocations,
+      locations: p.locations || [],
       targetStockSize: targetStock,
       remainingStock: Math.max(0, targetStock - distributed)
     };
@@ -610,6 +608,47 @@ export default function App() {
       }
     } catch (err: any) {
       console.warn("Program save error:", err);
+    }
+  };
+
+  // Facility / Office & Warehouse Administration helpers
+  const handleSaveFacility = async (fac: OfficeWarehouse) => {
+    try {
+      const exists = facilities.some(item => item.id === fac.id);
+      const updated = exists
+        ? facilities.map(item => item.id === fac.id ? fac : item)
+        : [...facilities, fac];
+      setFacilities(updated);
+      saveState('mwo_facilities', updated);
+
+      triggerToast('success', `অফিস/গুদাম "${fac.name}" সংরক্ষিত হয়েছে!`);
+
+      try {
+        await setDoc(doc(db, 'facilities', fac.id), JSON.parse(JSON.stringify(fac)));
+      } catch (e: any) {
+        console.warn("Firestore facility save warning:", e);
+      }
+    } catch (err: any) {
+      console.warn("Facility save error:", err);
+    }
+  };
+
+  const handleDeleteFacility = async (facId: string) => {
+    try {
+      const target = facilities.find(f => f.id === facId);
+      const updated = facilities.filter(f => f.id !== facId);
+      setFacilities(updated);
+      saveState('mwo_facilities', updated);
+
+      triggerToast('success', `অফিস/গুদাম "${target?.name || ''}" মুছে ফেলা হয়েছে!`);
+
+      try {
+        await deleteDoc(doc(db, 'facilities', facId));
+      } catch (e: any) {
+        console.warn("Firestore facility delete warning:", e);
+      }
+    } catch (err: any) {
+      console.warn("Facility delete error:", err);
     }
   };
 
@@ -1138,7 +1177,7 @@ export default function App() {
               </div>
 
               {/* Header Middle: Quick Essential Action Icons & View Badge */}
-              <div className="flex items-center gap-2">
+              <div className="hidden lg:flex items-center gap-2">
                 {/* Quick Face Biometrics Scanner shortcut */}
                 <button
                   onClick={() => navigateToTab('biometrics')}
@@ -1147,10 +1186,10 @@ export default function App() {
                       ? 'bg-emerald-600 text-white shadow-xs' 
                       : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/60'
                   }`}
-                  title="বায়োমেট্রিক ফেস স্ক্যানার ডেস্ক"
+                  title={isEn ? "Biometric Face Scanner" : "বায়োমেট্রিক ফেস স্ক্যানার ডেস্ক"}
                 >
                   <Scan className="w-4 h-4 text-emerald-600" />
-                  <span className="hidden md:inline">বায়োমেট্রিক স্ক্যান</span>
+                  <span className="hidden md:inline">{isEn ? 'Biometric Scan' : 'বায়োমেট্রিক স্ক্যান'}</span>
                 </button>
 
                 {/* Quick Inventory shortcut */}
@@ -1165,25 +1204,42 @@ export default function App() {
                         ? 'bg-amber-600 text-white shadow-xs' 
                         : 'text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200/60'
                     }`}
-                    title="রিলিফ প্রোগ্রামের ইনভেন্টরি ও গুদাম ডেস্ক"
+                    title={isEn ? "Inventory & Stock Desk" : "রিলিফ প্রোগ্রামের ইনভেন্টরি ও গুদাম ডেস্ক"}
                   >
                     <Boxes className="w-4 h-4 text-amber-700" />
-                    <span className="hidden md:inline">ইনভেন্টরি</span>
+                    <span className="hidden md:inline">{isEn ? 'Inventory' : 'ইনভেন্টরি'}</span>
+                  </button>
+                )}
+
+                {/* Quick Offices & Warehouses shortcut */}
+                {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.role === 'FieldAdmin' || currentUser?.permissions?.canManageInventory) && (
+                  <button
+                    onClick={() => navigateToTab('facilities')}
+                    className={`text-xs font-bold px-3 py-2 rounded-xl cursor-pointer flex items-center gap-1.5 transition active:scale-95 ${
+                      activeTab === 'facilities' 
+                        ? 'bg-emerald-700 text-white shadow-xs' 
+                        : 'text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200/60'
+                    }`}
+                    title={isEn ? "Offices & Warehouses Management" : "গুদাম ও শাখা অফিস ব্যবস্থাপনা"}
+                  >
+                    <Building2 className="w-4 h-4 text-emerald-600" />
+                    <span className="hidden md:inline">{isEn ? 'Warehouses & Offices' : 'গুদাম ও অফিস'}</span>
                   </button>
                 )}
 
                 {/* Current Active Section Badge (Desktop) */}
                 <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-3 py-1.5 rounded-full">
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                  <span className="text-slate-400">ভিউ:</span>
+                  <span className="text-slate-400">{isEn ? 'View:' : 'ভিউ:'}</span>
                   <strong className="text-slate-800">
-                    {activeTab === 'dashboard' ? 'হোম ড্যাশবোর্ড' :
-                     activeTab === 'biometrics' ? 'বায়োমেট্রিক স্ক্যানার' :
-                     activeTab === 'beneficiaries' ? 'সুবিধাভোগী ডিরেক্টরি' :
-                     activeTab === 'programs' ? 'প্রোগ্রাম ও ড্রাইভ' :
-                     activeTab === 'inventory' ? 'ইনভেন্টরি ডেস্ক' :
-                     activeTab === 'users' ? 'ইউজার ম্যানেজমেন্ট' :
-                     activeTab === 'profile' ? 'প্রোফাইল সেটিংস' : activeTab}
+                    {activeTab === 'dashboard' ? (isEn ? 'Home Dashboard' : 'হোম ড্যাশবোর্ড') :
+                     activeTab === 'biometrics' ? (isEn ? 'Biometric Scan' : 'বায়োমেট্রিক স্ক্যানার') :
+                     activeTab === 'beneficiaries' ? (isEn ? 'Beneficiary Directory' : 'সুবিধাভোগী ডিরেক্টরি') :
+                     activeTab === 'programs' ? (isEn ? 'Programs & Relief' : 'প্রোগ্রাম ও ড্রাইভ') :
+                     activeTab === 'inventory' ? (isEn ? 'Inventory Desk' : 'ইনভেন্টরি ডেস্ক') :
+                     activeTab === 'facilities' ? (isEn ? 'Offices & Warehouses' : 'গুদাম ও অফিস ব্যবস্থাপনা') :
+                     activeTab === 'users' ? (isEn ? 'User Management' : 'ইউজার ম্যানেজমেন্ট') :
+                     activeTab === 'profile' ? (isEn ? 'Profile Settings' : 'প্রোফাইল সেটিংস') : activeTab}
                   </strong>
                 </span>
               </div>
@@ -1212,46 +1268,92 @@ export default function App() {
                       className="fixed inset-0 z-40" 
                       onClick={() => setIsProfileDropdownOpen(false)} 
                     />
-                    <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 z-50 p-2 text-xs animate-in fade-in zoom-in-95 duration-150">
+                    <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 z-50 p-2.5 text-xs animate-in fade-in zoom-in-95 duration-150">
                       {/* User Info Header */}
-                      <div className="p-3 bg-slate-50 rounded-xl mb-2 border border-slate-100">
-                        <div className="font-bold text-slate-800 text-sm leading-snug">{currentUser.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">{currentUser.username || currentUser.id}</div>
-                        <span className="inline-block mt-2 text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                          {currentUser.role}
-                        </span>
+                      <div className="p-3 bg-slate-50 rounded-xl mb-2 border border-slate-100 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-slate-800 text-sm leading-snug">{currentUser.name}</div>
+                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">{currentUser.username || currentUser.id}</div>
+                          <span className="inline-block mt-1 text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
+                            {currentUser.role}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Language Switcher Button inside Profile Menu */}
+                      <div className="p-2.5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white rounded-xl mb-2 flex items-center justify-between shadow-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-emerald-400">
+                            <Languages className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-bold tracking-wide">
+                              {isEn ? 'Language / ভাষা' : 'ভাষা / Language'}
+                            </div>
+                            <div className="text-[9.5px] text-slate-300 font-mono">
+                              {isEn ? 'Current: English' : 'বর্তমান: বাংলা'}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={toggleLanguage}
+                          className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[11px] rounded-lg transition active:scale-95 flex items-center gap-1 shadow-sm cursor-pointer"
+                          title={isEn ? 'Switch to Bengali' : 'Switch to English'}
+                        >
+                          <Globe className="w-3.5 h-3.5" />
+                          <span>{isEn ? 'বাংলা (BN)' : 'English (EN)'}</span>
+                        </button>
                       </div>
 
                       {/* Dropdown Options */}
                       <div className="space-y-1">
                         <button
-                          onClick={() => navigateToTab('profile')}
+                          onClick={() => {
+                            setIsProfileDropdownOpen(false);
+                            navigateToTab('profile');
+                          }}
                           className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
                         >
                           <Settings className="w-4 h-4 text-slate-500" />
-                          <span>প্রোফাইল সেটিংস (Profile)</span>
+                          <span>{isEn ? 'Profile Settings' : 'প্রোফাইল সেটিংস'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsProfileDropdownOpen(false);
+                            navigateToTab('facilities');
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
+                        >
+                          <Building2 className="w-4 h-4 text-emerald-600" />
+                          <span>{isEn ? 'Offices & Warehouses' : 'গুদাম ও শাখা অফিস'}</span>
                         </button>
 
                         {isSuperAdmin && (
                           <button
-                            onClick={() => navigateToTab('users')}
+                            onClick={() => {
+                              setIsProfileDropdownOpen(false);
+                              navigateToTab('users');
+                            }}
                             className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
                           >
                             <UserCog className="w-4 h-4 text-purple-600" />
-                            <span>ইউজার ম্যানেজমেন্ট (Users)</span>
+                            <span>{isEn ? 'User Management' : 'ইউজার ম্যানেজমেন্ট'}</span>
                           </button>
                         )}
 
                         {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
                           <button
                             onClick={() => {
+                              setIsProfileDropdownOpen(false);
                               setSelectedInventoryProgramId(null);
                               navigateToTab('inventory');
                             }}
                             className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 font-medium text-slate-700 flex items-center gap-2.5 transition cursor-pointer"
                           >
                             <Boxes className="w-4 h-4 text-amber-600" />
-                            <span>ইনভেন্টরি ও গুদাম (Inventory)</span>
+                            <span>{isEn ? 'Inventory Desk' : 'ইনভেন্টরি ও গুদাম'}</span>
                           </button>
                         )}
                       </div>
@@ -1266,7 +1368,7 @@ export default function App() {
                           className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 text-rose-600 font-bold flex items-center gap-2.5 transition cursor-pointer"
                         >
                           <LogOut className="w-4 h-4 text-rose-500" />
-                          <span>লগআউট (Logout Session)</span>
+                          <span>{isEn ? 'Logout Session' : 'লগআউট'}</span>
                         </button>
                       </div>
                     </div>
@@ -1284,33 +1386,33 @@ export default function App() {
             <div className="fixed inset-0 z-50 flex">
               {/* Overlay Backdrop */}
               <div 
-                className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
+                className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
                 onClick={() => setIsLeftSidebarOpen(false)}
               />
 
-              {/* Sliding Drawer Container */}
-              <div className="relative w-80 max-w-[85vw] bg-slate-900 text-white shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-250 border-r border-slate-800">
+              {/* Sliding Drawer Container - CLEAN WHITE BACKGROUND */}
+              <div className="relative w-80 max-w-[85vw] bg-white text-slate-800 shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-250 border-r border-slate-200">
                 {/* Drawer Header */}
-                <div className="p-5 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/40">
+                <div className="p-4 border-b border-slate-200/80 flex items-center justify-between bg-slate-50/80">
                   <div className="flex items-center gap-3">
                     <img 
                       src={getBasePath() + '/mwo-logo.svg'} 
                       alt="MWO Logo" 
-                      className="h-9 object-contain bg-white/10 p-1 rounded-xl"
+                      className="h-9 object-contain drop-shadow-xs"
                     />
                     <div>
-                      <h3 className="font-black text-sm text-white tracking-tight leading-tight">
+                      <h3 className="font-black text-sm text-slate-900 tracking-tight leading-tight">
                         MWO Relief Hub
                       </h3>
-                      <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
-                        মানবকল্যাণ সংস্থা
+                      <p className="text-[10px] text-emerald-600 font-bold mt-0.5">
+                        {isEn ? 'Muslim Welfare Organization' : 'মানবকল্যাণ সংস্থা'}
                       </p>
                     </div>
                   </div>
                   <button
                     onClick={() => setIsLeftSidebarOpen(false)}
-                    className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                    title="মেনু বন্ধ করুন"
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer"
+                    title={isEn ? "Close menu" : "মেনু বন্ধ করুন"}
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -1321,31 +1423,31 @@ export default function App() {
                   {/* Group 1: Core Operations */}
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
-                      মূল কার্যপ্রণালী (Operations)
+                      {isEn ? 'Core Operations' : 'মূল কার্যপ্রণালী'}
                     </span>
                     <div className="space-y-1">
                       <button
                         onClick={() => navigateToTab('dashboard')}
                         className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                           activeTab === 'dashboard' 
-                            ? 'bg-emerald-600 text-white shadow-md' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-emerald-600 text-white shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                         }`}
                       >
                         <span className="text-base">🏠</span>
-                        <span>হোম ড্যাশবোর্ড (Dashboard)</span>
+                        <span>{isEn ? 'Home Dashboard' : 'হোম ড্যাশবোর্ড'}</span>
                       </button>
 
                       <button
                         onClick={() => navigateToTab('biometrics')}
                         className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                           activeTab === 'biometrics' 
-                            ? 'bg-emerald-600 text-white shadow-md' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-emerald-600 text-white shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                         }`}
                       >
-                        <Scan className="w-4 h-4 text-emerald-400" />
-                        <span>বায়োমেট্রিক ফেস স্ক্যানার (Scanner)</span>
+                        <Scan className={`w-4 h-4 ${activeTab === 'biometrics' ? 'text-white' : 'text-emerald-600'}`} />
+                        <span>{isEn ? 'Biometric Face Scan' : 'বায়োমেট্রিক ফেস স্ক্যান'}</span>
                       </button>
                     </div>
                   </div>
@@ -1353,31 +1455,31 @@ export default function App() {
                   {/* Group 2: Relief & Program Directories */}
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
-                      রিলিফ ও সাহায্য ডিরেক্টরি (Directories)
+                      {isEn ? 'Directories & Logistics' : 'ডিরেক্টরি ও সরবরাহ'}
                     </span>
                     <div className="space-y-1">
                       <button
                         onClick={() => navigateToTab('beneficiaries')}
                         className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                           activeTab === 'beneficiaries' 
-                            ? 'bg-emerald-600 text-white shadow-md' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-emerald-600 text-white shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                         }`}
                       >
-                        <Users className="w-4 h-4 text-sky-400" />
-                        <span>সুবিধাভোগী ডিরেক্টরি (Beneficiaries)</span>
+                        <Users className={`w-4 h-4 ${activeTab === 'beneficiaries' ? 'text-white' : 'text-sky-600'}`} />
+                        <span>{isEn ? 'Beneficiary Directory' : 'সুবিধাভোগী ডিরেক্টরি'}</span>
                       </button>
 
                       <button
                         onClick={() => navigateToTab('programs')}
                         className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                           activeTab === 'programs' 
-                            ? 'bg-emerald-600 text-white shadow-md' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-emerald-600 text-white shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                         }`}
                       >
-                        <ClipboardList className="w-4 h-4 text-amber-400" />
-                        <span>রিলিফ ড্রাইভ ও প্রোগ্রাম (Drives)</span>
+                        <ClipboardList className={`w-4 h-4 ${activeTab === 'programs' ? 'text-white' : 'text-amber-600'}`} />
+                        <span>{isEn ? 'Programs & Relief Drives' : 'প্রোগ্রাম ও ত্রাণ'}</span>
                       </button>
 
                       {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
@@ -1388,12 +1490,26 @@ export default function App() {
                           }}
                           className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                             activeTab === 'inventory' 
-                              ? 'bg-amber-600 text-white shadow-md' 
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              ? 'bg-amber-600 text-white shadow-xs' 
+                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                           }`}
                         >
-                          <Boxes className="w-4 h-4 text-amber-400" />
-                          <span>ইনভেন্টরি ও গুদাম ডেস্ক (Inventory)</span>
+                          <Boxes className={`w-4 h-4 ${activeTab === 'inventory' ? 'text-white' : 'text-amber-600'}`} />
+                          <span>{isEn ? 'Inventory Desk' : 'ইনভেন্টরি ডেস্ক'}</span>
+                        </button>
+                      )}
+
+                      {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.role === 'FieldAdmin' || currentUser?.permissions?.canManageInventory) && (
+                        <button
+                          onClick={() => navigateToTab('facilities')}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                            activeTab === 'facilities' 
+                              ? 'bg-emerald-600 text-white shadow-xs' 
+                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                          }`}
+                        >
+                          <Building2 className={`w-4 h-4 ${activeTab === 'facilities' ? 'text-white' : 'text-emerald-600'}`} />
+                          <span>{isEn ? 'Offices & Warehouses' : 'গুদাম ও শাখা ব্যবস্থাপনা'}</span>
                         </button>
                       )}
                     </div>
@@ -1402,7 +1518,7 @@ export default function App() {
                   {/* Group 3: Admin & Settings */}
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block px-3 mb-2 font-mono">
-                      সিস্টেম ও কনফিগারেশন (Settings)
+                      {isEn ? 'System & Settings' : 'সিস্টেম ও সেটিংস'}
                     </span>
                     <div className="space-y-1">
                       {isSuperAdmin && (
@@ -1410,12 +1526,12 @@ export default function App() {
                           onClick={() => navigateToTab('users')}
                           className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                             activeTab === 'users' 
-                              ? 'bg-emerald-600 text-white shadow-md' 
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              ? 'bg-emerald-600 text-white shadow-xs' 
+                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                           }`}
                         >
-                          <UserCog className="w-4 h-4 text-purple-400" />
-                          <span>ইউজার অ্যাকাউন্টস (User Accounts)</span>
+                          <UserCog className={`w-4 h-4 ${activeTab === 'users' ? 'text-white' : 'text-purple-600'}`} />
+                          <span>{isEn ? 'User Management' : 'ইউজার ম্যানেজমেন্ট'}</span>
                         </button>
                       )}
 
@@ -1423,27 +1539,27 @@ export default function App() {
                         onClick={() => navigateToTab('profile')}
                         className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
                           activeTab === 'profile' 
-                            ? 'bg-emerald-600 text-white shadow-md' 
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            ? 'bg-emerald-600 text-white shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
                         }`}
                       >
-                        <Settings className="w-4 h-4 text-slate-400" />
-                        <span>প্রোফাইল সেটিংস (My Profile)</span>
+                        <Settings className={`w-4 h-4 ${activeTab === 'profile' ? 'text-white' : 'text-slate-500'}`} />
+                        <span>{isEn ? 'Profile Settings' : 'প্রোফাইল সেটিংস'}</span>
                       </button>
                     </div>
                   </div>
                 </div>
 
                 {/* Bottom User Profile Card & Logout in Drawer */}
-                <div className="p-4 border-t border-slate-800/80 bg-slate-950/60">
+                <div className="p-4 border-t border-slate-200/80 bg-slate-50/80">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
                         {currentUser.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <div className="font-bold text-white text-xs truncate">{currentUser.name}</div>
-                        <div className="text-[10px] text-slate-400 font-mono uppercase">{currentUser.role}</div>
+                        <div className="font-bold text-slate-800 text-xs truncate">{currentUser.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono uppercase">{currentUser.role}</div>
                       </div>
                     </div>
                   </div>
@@ -1452,10 +1568,10 @@ export default function App() {
                       setIsLeftSidebarOpen(false);
                       handleLogout();
                     }}
-                    className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-rose-900/50 hover:text-rose-300 text-slate-300 font-bold flex items-center justify-center gap-2 transition cursor-pointer text-xs"
+                    className="w-full py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold flex items-center justify-center gap-2 transition cursor-pointer text-xs border border-rose-200/60"
                   >
-                    <LogOut className="w-4 h-4 text-rose-400" />
-                    <span>লগআউট (Logout Session)</span>
+                    <LogOut className="w-4 h-4 text-rose-600" />
+                    <span>{isEn ? 'Logout Session' : 'লগআউট'}</span>
                   </button>
                 </div>
               </div>
@@ -1463,7 +1579,7 @@ export default function App() {
           )}
 
           {/* MAIN PAGE RENDER PLATFORMS */}
-          <main className="flex-grow max-w-7xl w-full mx-auto px-4 py-6">
+          <main className="flex-grow max-w-7xl w-full mx-auto px-4 pt-6 pb-24 lg:pb-8">
             
             {firestorePermissionError && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-6 text-left shadow-sm">
@@ -1836,9 +1952,11 @@ service cloud.firestore {
             {activeTab === 'create_program' && isSuperAdmin && (
               <ProgramCreate
                 donorsList={users.filter(u => u.role === 'Donor')}
+                facilitiesList={facilities}
                 onSave={handleSaveProgram}
                 onCancel={() => setActiveTab('dashboard')}
                 editingProgram={editingProgram}
+                onOpenCreateFacility={() => navigateToTab('facilities')}
               />
             )}
 
@@ -1931,6 +2049,24 @@ service cloud.firestore {
               />
             )}
 
+            {/* ====== 5.6 DEDICATED OFFICES & WAREHOUSES MANAGEMENT ====== */}
+            {activeTab === 'facilities' && (
+              <OfficeWarehouseManagement
+                facilities={facilities}
+                programs={enrichedPrograms}
+                currentUser={currentUser}
+                onSaveFacility={handleSaveFacility}
+                onDeleteFacility={handleDeleteFacility}
+                onNavigateToInventory={(programId, warehouseName) => {
+                  setSelectedInventoryProgramId(programId || null);
+                  setActiveTab('inventory');
+                }}
+                onNavigateToProgramDesk={(programId) => {
+                  setActiveTab('programs');
+                }}
+              />
+            )}
+
             {/* ====== 6. USER ACCOUNT ADMINISTRATION LISTS (SUPER ADMIN ONLY) ====== */}
             {activeTab === 'users' && isSuperAdmin && (
               <UserManagement
@@ -2011,6 +2147,96 @@ service cloud.firestore {
           {/* CENTRE BRANDED FOOTER LINK */}
           <Footer />
         </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* FIXED 5-BUTTON QUICK NAVIGATION MENU (MOBILE & TABLET BOTTOM BAR) */}
+      {/* ========================================================================= */}
+      {currentUser && (
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-2xl px-2 py-1.5 flex items-center justify-around select-none">
+          {/* 1. Beneficiary Directory */}
+          <button
+            onClick={() => navigateToTab('beneficiaries')}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+              activeTab === 'beneficiaries'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <Users className={`w-5 h-5 mb-0.5 ${activeTab === 'beneficiaries' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-none tracking-tight">
+              {isEn ? 'Beneficiaries' : 'সুবিধাভোগী'}
+            </span>
+          </button>
+
+          {/* 2. Inventory */}
+          <button
+            onClick={() => {
+              setSelectedInventoryProgramId(null);
+              navigateToTab('inventory');
+            }}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+              activeTab === 'inventory'
+                ? 'text-amber-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <Boxes className={`w-5 h-5 mb-0.5 ${activeTab === 'inventory' ? 'text-amber-600 scale-110' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-none tracking-tight">
+              {isEn ? 'Inventory' : 'ইনভেন্টরি'}
+            </span>
+          </button>
+
+          {/* 3. CENTER HERO BUTTON: Biometric Face Scan */}
+          <button
+            onClick={() => navigateToTab('biometrics')}
+            className="flex flex-col items-center justify-center cursor-pointer -translate-y-3 active:scale-95 group focus:outline-none"
+            title={isEn ? 'Biometric Face Scan' : 'বায়োমেট্রিক ফেস স্ক্যান'}
+          >
+            <div className={`w-13 h-13 rounded-full flex items-center justify-center shadow-lg transition-transform duration-200 border-4 border-slate-50 ${
+              activeTab === 'biometrics'
+                ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-emerald-500/40 ring-2 ring-emerald-500 scale-105'
+                : 'bg-gradient-to-tr from-emerald-700 to-emerald-500 text-white shadow-emerald-700/30 group-hover:scale-105'
+            }`}>
+              <Scan className="w-6 h-6 animate-pulse" />
+            </div>
+            <span className={`text-[10.5px] font-extrabold mt-0.5 tracking-tight ${
+              activeTab === 'biometrics' ? 'text-emerald-600' : 'text-slate-700'
+            }`}>
+              {isEn ? 'Face Scan' : 'বায়োমেট্রিক'}
+            </span>
+          </button>
+
+          {/* 4. Relief Programs */}
+          <button
+            onClick={() => navigateToTab('programs')}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+              activeTab === 'programs'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <ClipboardList className={`w-5 h-5 mb-0.5 ${activeTab === 'programs' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-none tracking-tight">
+              {isEn ? 'Programs' : 'প্রোগ্রাম'}
+            </span>
+          </button>
+
+          {/* 5. Warehouse & Offices */}
+          <button
+            onClick={() => navigateToTab('facilities')}
+            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+              activeTab === 'facilities'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <Building2 className={`w-5 h-5 mb-0.5 ${activeTab === 'facilities' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-none tracking-tight">
+              {isEn ? 'Warehouses' : 'গুদাম ও শাখা'}
+            </span>
+          </button>
+        </div>
       )}
 
       {/* Toast Notification HUD */}

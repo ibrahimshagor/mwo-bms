@@ -130,3 +130,18 @@ export interface ServiceRecord {
   warehouse?: string; // কোন গুদাম থেকে মালামাল সরবরাহ করা হয়েছে (যেমন: "কক্সবাজার")
   notes?: string;
 }
+
+export type FacilityType = 'Warehouse' | 'Office' | 'Office & Warehouse';
+
+export interface OfficeWarehouse {
+  id: string; // e.g. "FAC-1001"
+  name: string; // e.g. "ময়মনসিংহ অফিস ও গুদাম", "কক্সবাজার ওয়্যারহাউস", "ঢাকা প্রধান কার্যালয়"
+  type: FacilityType; // 'Warehouse' | 'Office' | 'Office & Warehouse'
+  address?: string; // অবস্থান / ঠিকানা
+  contactPerson?: string; // দায়িত্বপ্রাপ্ত ব্যক্তি
+  phone?: string; // মোবাইল নম্বর
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+

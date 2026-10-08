@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Beneficiary, Program, ServiceRecord } from '../types';
 import FaceScanner from './FaceScanner';
+import { useLanguage } from '../context/LanguageContext';
 import { 
   ArrowLeft, Scan, ShieldCheck, CheckCircle2, User, Phone, 
   MapPin, ShoppingBag, ArrowRight, RefreshCw, UserPlus, FileText, Check
@@ -25,6 +26,7 @@ export default function BiometricVerificationDesk({
   onViewBeneficiaryProfile,
   onRegisterNew,
 }: BiometricVerificationDeskProps) {
+  const { isEn } = useLanguage();
   const [scannerOpen, setScannerOpen] = useState(true);
   const [lastMatch, setLastMatch] = useState<{
     beneficiary: Beneficiary;
@@ -51,18 +53,20 @@ export default function BiometricVerificationDesk({
             type="button"
             onClick={onBack}
             className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200 shrink-0"
-            title="Return to previous screen"
+            title={isEn ? "Return to dashboard" : "ড্যাশবোর্ডে ফিরে যান"}
           >
             <ArrowLeft className="w-4 h-4 text-emerald-600" />
-            <span>Back to Dashboard</span>
+            <span>{isEn ? 'Back to Dashboard' : 'ড্যাশবোর্ডে ফিরুন'}</span>
           </button>
           <div>
             <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2 font-display">
               <Scan className="w-5 h-5 text-emerald-600" />
-              <span>Biometric Face Verification Desk</span>
+              <span>{isEn ? 'Biometric Face Verification Desk' : 'বায়োমেট্রিক ফেস ভেরিফিকেশন ডেস্ক'}</span>
             </h2>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Live 128D AI vector matching against {registeredWithPhoto.length} registered facial signatures
+              {isEn 
+                ? `Live AI vector matching against ${registeredWithPhoto.length} registered facial signatures`
+                : `${registeredWithPhoto.length} টি নিবন্ধিত চেহারার বায়োমেট্রিক থেকে লাইভ সনাক্তকরণ`}
             </p>
           </div>
         </div>
@@ -75,7 +79,7 @@ export default function BiometricVerificationDesk({
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
             >
               <Scan className="w-4 h-4" />
-              <span>Start Live Scan</span>
+              <span>{isEn ? 'Start Live Scan' : 'স্ক্যান শুরু করুন'}</span>
             </button>
           )}
           {onRegisterNew && (
@@ -85,7 +89,7 @@ export default function BiometricVerificationDesk({
               className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer border border-slate-200"
             >
               <UserPlus className="w-4 h-4 text-slate-600" />
-              <span>Enroll New Citizen</span>
+              <span>{isEn ? 'Enroll New Citizen' : 'নতুন সুবিধাভোগী নিবন্ধন'}</span>
             </button>
           )}
         </div>

@@ -1,4 +1,47 @@
-import { User, Program, Beneficiary, ServiceRecord } from './types';
+import { User, Program, Beneficiary, ServiceRecord, OfficeWarehouse } from './types';
+
+export const DEFAULT_OFFICE_WAREHOUSES: OfficeWarehouse[] = [
+  {
+    id: 'FAC-101',
+    name: 'ময়মনসিংহ',
+    type: 'Office & Warehouse',
+    address: 'ময়মনসিংহ সদর, কাঁচিঝুলি রোড',
+    contactPerson: 'তারেক রহমান (স্টোর কিপার)',
+    phone: '01711-000111',
+    notes: 'প্রধান কেন্দ্রীয় গুদাম ও আঞ্চলিক কার্যালয়',
+    createdAt: '2026-01-15'
+  },
+  {
+    id: 'FAC-102',
+    name: 'কক্সবাজার',
+    type: 'Office & Warehouse',
+    address: 'কক্সবাজার লিংক রোড, ঝিলংজা',
+    contactPerson: 'মুহাম্মদ শাকিল',
+    phone: '01819-222333',
+    notes: 'রোহিঙ্গা ও উপকূলীয় ত্রাণ কার্যক্রম কেন্দ্র ও স্টোরেজ',
+    createdAt: '2026-01-20'
+  },
+  {
+    id: 'FAC-103',
+    name: 'খুলনা',
+    type: 'Warehouse',
+    address: 'খালিশপুর শিল্প এলাকা, খুলনা',
+    contactPerson: 'আরিফুল ইসলাম',
+    phone: '01914-555666',
+    notes: 'দক্ষিণাঞ্চল দুর্যোগ প্রস্তুতি স্টোরেজ ডিপো',
+    createdAt: '2026-02-01'
+  },
+  {
+    id: 'FAC-104',
+    name: 'ঢাকা হেড অফিস',
+    type: 'Office',
+    address: 'ধানমন্ডি ২৭, ঢাকা',
+    contactPerson: 'মোঃ ইব্রাহিম হোসেন',
+    phone: '01712-345678',
+    notes: 'কেন্দ্রীয় প্রশাসনিক প্রধান কার্যালয়',
+    createdAt: '2026-01-10'
+  }
+];
 
 // Default system-admin, staff, and donor credentials
 export const DEFAULT_USERS: User[] = [
@@ -64,7 +107,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 500,
     remainingStock: 497,
     warehouses: ['ময়মনসিংহ', 'কক্সবাজার', 'খুলনা'],
-    locations: ['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'ময়মনসিংহ সদর'],
+    locations: [],
     inventoryItems: [
       { 
         id: 'ITEM-101', 
@@ -202,7 +245,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 1200,
     remainingStock: 1200,
     warehouses: ['কক্সবাজার ক্যাম্প-১', 'কক্সবাজার ক্যাম্প-৪'],
-    locations: ['কুতুপালং ক্যাম্প ১', 'মধুছড়া ক্যাম্প ৪', 'বালুখালী ক্যাম্প ৯'],
+    locations: [],
     inventoryItems: [
       { 
         id: 'ITEM-201', 
@@ -288,7 +331,7 @@ export const DEFAULT_PROGRAMS: Program[] = [
     targetStockSize: 300,
     remainingStock: 298,
     warehouses: ['মিরপুর গুদাম', 'মোহাম্মদপুর গুদাম'],
-    locations: ['মিরপুর বস্তি এলাকা', 'মোহাম্মদপুর জেনেভা ক্যাম্প', 'কল্যাণপুর পোড়া বস্তি'],
+    locations: [],
     inventoryItems: [
       { 
         id: 'ITEM-301', 

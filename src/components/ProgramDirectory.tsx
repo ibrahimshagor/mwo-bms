@@ -843,7 +843,7 @@ export default function ProgramDirectory({
 
                         {/* Quick 1-click selectable location buttons */}
                         <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                          <span className="text-[10px] font-bold text-slate-400">কুইক সিলেক্ট:</span>
+                          <span className="text-[10px] font-bold text-slate-400">কুইক নির্বাচন:</span>
                           {selectedDeskProgram.locations.map(loc => {
                             const isSelected = (anonCampOrLocation || selectedDeskProgram.locations![0]) === loc;
                             return (
@@ -865,28 +865,15 @@ export default function ProgramDirectory({
                         </div>
                       </div>
                     ) : (
-                      /* Fallback input if program doesn't have locations configured yet */
-                      <div className="space-y-2">
+                      /* Clean input if program doesn't have locations configured */
+                      <div>
                         <input
                           type="text"
                           value={anonCampOrLocation}
                           onChange={(e) => setAnonCampOrLocation(e.target.value)}
-                          placeholder="বিতরণস্থলের নাম লিখুন (যেমন: উখিয়া ক্যাম্প ১২, টেকনাফ লেদা)..."
+                          placeholder="বিতরণস্থলের নাম লিখুন (যেমন: আপনার নির্দিষ্ট এলাকা বা মাঠের নাম)..."
                           className="w-full border border-slate-300 rounded-lg p-2.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-amber-500 bg-white"
                         />
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] font-bold text-slate-400">প্রস্তাবিত বিতরণস্থল:</span>
-                          {['উখিয়া ক্যাম্প ১২', 'টেকনাফ লেদা', 'কুতুপালং ক্যাম্প', 'ময়মনসিংহ সদর', 'কক্সবাজার সদর'].map(preset => (
-                            <button
-                              key={preset}
-                              type="button"
-                              onClick={() => setAnonCampOrLocation(preset)}
-                              className="text-[10px] bg-white hover:bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-medium border border-slate-200 cursor-pointer transition"
-                            >
-                              +{preset}
-                            </button>
-                          ))}
-                        </div>
                       </div>
                     )}
                   </div>
