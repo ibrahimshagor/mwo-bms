@@ -131,6 +131,30 @@ export interface ServiceRecord {
   notes?: string;
 }
 
+export interface WarehouseProductStock {
+  warehouseName: string;
+  currentStock: number; // বর্তমান মজুদ
+  totalReceived?: number; // মোট প্রাপ্ত মালামাল
+  allocatedOrDispatched?: number; // প্যাকেজে ব্যবহৃত বা বিতরণ
+  notes?: string;
+  updatedAt?: string;
+}
+
+export interface CatalogProduct {
+  id: string; // e.g. "PROD-101"
+  name: string; // e.g. "মিনিকেট চাল / Miniket Rice"
+  category: string; // e.g. "খাদ্যপণ্য", "শীতবস্ত্র", "স্যানিটেশন সামগ্রী", "শিশুপণ্য", "মেডিকেল সামগ্রী", "অন্যান্য"
+  unit: string; // e.g. "কেজি (Kg)", "পিস (Pcs)", "লিটার (Liter)", "প্যাকেট (Pkt)", "বস্তা (Bag)"
+  sku?: string; // বারকোড বা এসকেইউ কোড
+  description?: string;
+  minStockAlert?: number; // নিম্ন স্টক সতর্কতা সীমা (যেমন: ৫০)
+  warehouseStocks?: { [warehouseName: string]: WarehouseProductStock }; // গুদাম ভিত্তিক বর্তমান স্টক
+  totalStock?: number; // সকল গুদাম মিলিয়ে মোট স্টক (ক্যালকুলেটেড বা ক্যাশড)
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type FacilityType = 'Warehouse' | 'Office' | 'Office & Warehouse';
 
 export interface OfficeWarehouse {

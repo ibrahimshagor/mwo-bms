@@ -1,4 +1,121 @@
-import { User, Program, Beneficiary, ServiceRecord, OfficeWarehouse } from './types';
+import { User, Program, Beneficiary, ServiceRecord, OfficeWarehouse, CatalogProduct } from './types';
+
+// Default Central Product Catalog Items with Per-Warehouse Stock Breakdown
+export const DEFAULT_CATALOG_PRODUCTS: CatalogProduct[] = [
+  {
+    id: 'PROD-101',
+    name: 'মিনিকেট চাল (Miniket Rice)',
+    category: 'খাদ্যপণ্য',
+    unit: 'কেজি (Kg)',
+    sku: 'RICE-MINI-01',
+    description: 'উচ্চমানের প্রিমিয়াম মিনিকেট চাল, ৫০ কেজি প্লাস্টিক বস্তা প্যাকিং',
+    minStockAlert: 500,
+    warehouseStocks: {
+      'মিরপুর গুদাম': { warehouseName: 'মিরপুর গুদাম', currentStock: 2000, totalReceived: 2000, allocatedOrDispatched: 0 },
+      'মোহাম্মদপুর গুদাম': { warehouseName: 'মোহাম্মদপুর গুদাম', currentStock: 1500, totalReceived: 1500, allocatedOrDispatched: 0 },
+      'ময়মনসিংহ': { warehouseName: 'ময়মনসিংহ', currentStock: 1200, totalReceived: 1200, allocatedOrDispatched: 0 },
+      'কক্সবাজার': { warehouseName: 'কক্সবাজার', currentStock: 800, totalReceived: 800, allocatedOrDispatched: 0 }
+    },
+    notes: 'প্রধান খাদ্য সহায়তা স্টোরেজ'
+  },
+  {
+    id: 'PROD-102',
+    name: 'তুর্কি ভারী ব্লাঙ্কেট (Heavy Blanket)',
+    category: 'শীতবস্ত্র',
+    unit: 'পিস (Pcs)',
+    sku: 'WINT-BLANK-02',
+    description: 'ডাবল প্লাশ তুর্কি ফ্লিস উইন্টার ব্লাঙ্কেট, চরম শীতের জন্য উপযোগী',
+    minStockAlert: 100,
+    warehouseStocks: {
+      'ময়মনসিংহ': { warehouseName: 'ময়মনসিংহ', currentStock: 300, totalReceived: 300, allocatedOrDispatched: 0 },
+      'কক্সবাজার': { warehouseName: 'কক্সবাজার', currentStock: 200, totalReceived: 200, allocatedOrDispatched: 0 },
+      'খুলনা': { warehouseName: 'খুলনা', currentStock: 100, totalReceived: 100, allocatedOrDispatched: 0 }
+    },
+    notes: 'শীতকালীন জরুরি কম্বল'
+  },
+  {
+    id: 'PROD-103',
+    name: 'ফর্টিফাইড সয়াবিন তেল (Soybean Oil)',
+    category: 'খাদ্যপণ্য',
+    unit: 'লিটার (Liter)',
+    sku: 'OIL-SOYA-03',
+    description: 'ভিটামিন এ সমৃদ্ধ খাঁটি রিফাইন্ড সয়াবিন ভোজ্য তেল (বোতলজাত)',
+    minStockAlert: 200,
+    warehouseStocks: {
+      'মিরপুর গুদাম': { warehouseName: 'মিরপুর গুদাম', currentStock: 400, totalReceived: 400, allocatedOrDispatched: 0 },
+      'মোহাম্মদপুর গুদাম': { warehouseName: 'মোহাম্মদপুর গুদাম', currentStock: 300, totalReceived: 300, allocatedOrDispatched: 0 },
+      'ময়মনসিংহ': { warehouseName: 'ময়মনসিংহ', currentStock: 500, totalReceived: 500, allocatedOrDispatched: 0 }
+    },
+    notes: '২ লিটার পেট বোতল'
+  },
+  {
+    id: 'PROD-104',
+    name: 'মসুর ডাল (Red Lentils)',
+    category: 'খাদ্যপণ্য',
+    unit: 'কেজি (Kg)',
+    sku: 'LENT-RED-04',
+    description: 'দেশি ও অস্ট্রেলিয়ান প্রিমিয়াম মসুর ডাল, খাদ্যপুষ্টির প্রধান উপাদান',
+    minStockAlert: 150,
+    warehouseStocks: {
+      'মিরপুর গুদাম': { warehouseName: 'মিরপুর গুদাম', currentStock: 450, totalReceived: 450, allocatedOrDispatched: 0 },
+      'মোহাম্মদপুর গুদাম': { warehouseName: 'মোহাম্মদপুর গুদাম', currentStock: 350, totalReceived: 350, allocatedOrDispatched: 0 }
+    },
+    notes: '২৫ কেজি বস্তা'
+  },
+  {
+    id: 'PROD-105',
+    name: 'উইন্টার জ্যাকেট (Warm Jacket)',
+    category: 'শীতবস্ত্র',
+    unit: 'পিস (Pcs)',
+    sku: 'WINT-JACK-05',
+    description: 'ওয়াটারপ্রুফ প্যাডেড উইন্টার জ্যাকেট উইথ হুডি',
+    minStockAlert: 80,
+    warehouseStocks: {
+      'ময়মনসিংহ': { warehouseName: 'ময়মনসিংহ', currentStock: 275, totalReceived: 275, allocatedOrDispatched: 0 },
+      'কক্সবাজার': { warehouseName: 'কক্সবাজার', currentStock: 175, totalReceived: 175, allocatedOrDispatched: 0 },
+      'খুলনা': { warehouseName: 'খুলনা', currentStock: 100, totalReceived: 100, allocatedOrDispatched: 0 }
+    }
+  },
+  {
+    id: 'PROD-106',
+    name: 'অ্যান্টিসেপটিক সাবান (Antiseptic Soap)',
+    category: 'স্যানিটেশন ও হাইজিন',
+    unit: 'পিস (Pcs)',
+    sku: 'WASH-SOAP-06',
+    description: 'জীবাণুনাশক গোসলের সাবান ১০০ গ্রাম',
+    minStockAlert: 500,
+    warehouseStocks: {
+      'কক্সবাজার ক্যাম্প-১': { warehouseName: 'কক্সবাজার ক্যাম্প-১', currentStock: 2800, totalReceived: 2800, allocatedOrDispatched: 0 },
+      'কক্সবাজার ক্যাম্প-৪': { warehouseName: 'কক্সবাজার ক্যাম্প-৪', currentStock: 2000, totalReceived: 2000, allocatedOrDispatched: 0 }
+    }
+  },
+  {
+    id: 'PROD-107',
+    name: 'ডিটারজেন্ট পাউডার (Detergent 1kg)',
+    category: 'স্যানিটেশন ও হাইজিন',
+    unit: 'প্যাকেট (Pkt)',
+    sku: 'WASH-DET-07',
+    description: '১ কেজি ওয়াশিং পাউডার প্যাকেট',
+    minStockAlert: 300,
+    warehouseStocks: {
+      'কক্সবাজার ক্যাম্প-১': { warehouseName: 'কক্সবাজার ক্যাম্প-১', currentStock: 900, totalReceived: 900, allocatedOrDispatched: 0 },
+      'কক্সবাজার ক্যাম্প-৪': { warehouseName: 'কক্সবাজার ক্যাম্প-৪', currentStock: 600, totalReceived: 600, allocatedOrDispatched: 0 }
+    }
+  },
+  {
+    id: 'PROD-108',
+    name: 'সাদা চিনি (Refined Sugar)',
+    category: 'খাদ্যপণ্য',
+    unit: 'কেজি (Kg)',
+    sku: 'FOOD-SUG-08',
+    description: 'পরিষ্কার সাদা চিনি, ৫০ কেজি বস্তা',
+    minStockAlert: 200,
+    warehouseStocks: {
+      'মিরপুর গুদাম': { warehouseName: 'মিরপুর গুদাম', currentStock: 400, totalReceived: 400, allocatedOrDispatched: 0 },
+      'মোহাম্মদপুর গুদাম': { warehouseName: 'মোহাম্মদপুর গুদাম', currentStock: 300, totalReceived: 300, allocatedOrDispatched: 0 }
+    }
+  }
+];
 
 export const DEFAULT_OFFICE_WAREHOUSES: OfficeWarehouse[] = [
   {
@@ -40,6 +157,46 @@ export const DEFAULT_OFFICE_WAREHOUSES: OfficeWarehouse[] = [
     phone: '01712-345678',
     notes: 'কেন্দ্রীয় প্রশাসনিক প্রধান কার্যালয়',
     createdAt: '2026-01-10'
+  },
+  {
+    id: 'FAC-105',
+    name: 'মিরপুর গুদাম',
+    type: 'Warehouse',
+    address: 'মিরপুর-১১, ঢাকা',
+    contactPerson: 'কামরুল হাসান (স্টোর অফিসার)',
+    phone: '01718-444555',
+    notes: 'ঢাকা উত্তর কেন্দ্রীয় ত্রাণ মজুদ কেন্দ্র',
+    createdAt: '2026-01-12'
+  },
+  {
+    id: 'FAC-106',
+    name: 'মোহাম্মদপুর গুদাম',
+    type: 'Warehouse',
+    address: 'মোহাম্মদপুর বাঁশবাড়ী রোড, ঢাকা',
+    contactPerson: 'জাহিদুল ইসলাম',
+    phone: '01822-777888',
+    notes: 'ঢাকা দক্ষিণ ও বস্তি এলাকা ত্রাণ বিতরণ গুদাম',
+    createdAt: '2026-01-14'
+  },
+  {
+    id: 'FAC-107',
+    name: 'কক্সবাজার ক্যাম্প-১',
+    type: 'Warehouse',
+    address: 'কুতুপালং ক্যাম্প ১, উখিয়া, কক্সবাজার',
+    contactPerson: 'আমিনুল হক',
+    phone: '01925-111222',
+    notes: 'জরুরি ফিল্ড ডেলিভারি পয়েন্ট ও স্টোরেজ',
+    createdAt: '2026-01-18'
+  },
+  {
+    id: 'FAC-108',
+    name: 'কক্সবাজার ক্যাম্প-৪',
+    type: 'Warehouse',
+    address: 'বালুখালী ক্যাম্প ৪, উখিয়া, কক্সবাজার',
+    contactPerson: 'নুরুল আমিন',
+    phone: '01833-999000',
+    notes: 'উখিয়া ক্যাম্প ফিল্ড সাব-গুদাম',
+    createdAt: '2026-01-22'
   }
 ];
 

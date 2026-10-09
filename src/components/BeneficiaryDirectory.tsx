@@ -120,38 +120,38 @@ export default function BeneficiaryDirectory({
   };
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm max-w-5xl mx-auto">
+    <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-5 shadow-sm max-w-5xl mx-auto">
       
       {/* Title heading line */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-150 mb-5">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-150 mb-4 sm:mb-5">
         <div>
-          <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wider font-display">
+          <h2 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wider font-display">
             <Users className="w-5 h-5 text-emerald-600 animate-pulse" />
             {isDonor ? 'Verified Members Directory' : 'Global Registered Beneficiaries'} ({filteredBeneficiaries.length})
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
             {isDonor 
               ? 'Showing verified citizens receiving service through your endorsed funding programs.'
               : 'Secure tracking of biographical profiles, signatures, and biometric indices.'}
           </p>
         </div>
         
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
           <button
             onClick={handleExportFiltered}
-            className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-205 font-bold text-xs py-2 px-3 rounded-xl flex items-center gap-1 cursor-pointer transition shadow-xs"
+            className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-205 font-bold text-xs py-2 px-3 rounded-xl flex items-center justify-center gap-1 cursor-pointer transition shadow-xs flex-1 sm:flex-initial"
             title="Export filtered directory to Excel"
           >
             <Download className="w-4 h-4 text-emerald-600" />
-            Export Excel
+            <span>Export Excel</span>
           </button>
           {!isDonor && (
             <button
               onClick={() => onShowRegisterForm()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl flex items-center gap-1 cursor-pointer shadow-sm transition"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2 px-3.5 rounded-xl flex items-center justify-center gap-1 cursor-pointer shadow-sm transition flex-1 sm:flex-initial"
             >
               <Plus className="w-4 h-4" />
-              Register Beneficiary
+              <span>Register Beneficiary</span>
             </button>
           )}
         </div>
@@ -194,113 +194,244 @@ export default function BeneficiaryDirectory({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[9.5px] bg-slate-50">
-                <th className="p-3">Face</th>
-                <th className="p-3">Unique ID</th>
-                <th className="p-3">Full Name</th>
-                <th className="p-3">NID / Birth Cert</th>
-                <th className="p-3">Type</th>
-                <th className="p-3">Distribution Status</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredBeneficiaries.map((b) => (
-                <tr key={b.id} className="hover:bg-slate-50/40">
-                  <td className="p-3">
-                    <div className="w-9 h-11 bg-slate-100 border border-slate-200 rounded overflow-hidden">
-                      {b.photo ? (
-                        <img 
-                          src={b.photo}
-                          referrerPolicy="no-referrer"
-                          alt="Face Preview"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="text-[7px] text-slate-400 font-bold pt-4 text-center leading-none">NO PIC</div>
-                      )}
+        <>
+          {/* ========================================================================= */}
+          {/* MOBILE RESPONSIVE CARDS VIEW (< md): 100% SCREEN FIT, ZERO HORIZONTAL SCROLL */}
+          {/* ========================================================================= */}
+          <div className="md:hidden space-y-3">
+            {filteredBeneficiaries.map((b) => (
+              <div 
+                key={b.id}
+                className="bg-slate-50/80 border border-slate-200 rounded-xl p-3 shadow-2xs hover:border-emerald-200 transition"
+              >
+                {/* Top Row: Photo + Name + Type + Fast Scan Trigger */}
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-14 bg-white border border-slate-200 rounded-lg overflow-hidden shrink-0 shadow-2xs">
+                    {b.photo ? (
+                      <img 
+                        src={b.photo}
+                        referrerPolicy="no-referrer"
+                        alt={b.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-[7.5px] text-slate-400 font-bold pt-5 text-center leading-none">NO PIC</div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-1">
+                      <h3 className="text-xs font-bold text-slate-900 leading-tight truncate">
+                        {b.name}
+                      </h3>
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8.5px] font-bold uppercase tracking-tight ${
+                        b.type === 'Widow'
+                          ? 'bg-purple-100/80 text-purple-700'
+                          : b.type === 'Orphan'
+                          ? 'bg-amber-100/80 text-amber-700'
+                          : b.type === 'Disable'
+                          ? 'bg-rose-100/80 text-rose-700'
+                          : 'bg-slate-200/80 text-slate-700'
+                      }`}>
+                        {b.type}
+                      </span>
                     </div>
-                  </td>
-                  <td className="p-3 font-mono font-bold text-slate-700 select-all">{b.id}</td>
-                  <td className="p-3 font-semibold text-slate-850">
-                    <p className="font-bold">{b.name}</p>
-                    <p className="text-[9.5px] text-slate-440 font-normal">{getAge(b.dob)}, {b.gender}</p>
-                  </td>
-                  <td className="p-3 font-mono font-medium text-slate-600">{b.nidOrBirthCert}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-0.5 rounded-md font-bold text-[8.5px] uppercase ${
-                      b.type === 'Widow'
-                        ? 'bg-purple-50 text-purple-700 border border-purple-150'
-                        : b.type === 'Orphan'
-                        ? 'bg-amber-50 text-amber-700 border border-amber-150'
-                        : b.type === 'Disable'
-                        ? 'bg-rose-50 text-rose-700 border border-rose-150'
-                        : 'bg-slate-100 text-slate-750'
-                    }`}>
-                      {b.type}
-                    </span>
-                  </td>
-                  <td className="p-3 text-[10px] font-medium text-slate-500">
+
+                    <div className="text-[10px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-150">
+                        {b.id}
+                      </span>
+                      <span>&bull;</span>
+                      <span>{getAge(b.dob)}, {b.gender}</span>
+                    </div>
+
+                    <div className="text-[10.5px] text-slate-600 font-mono mt-1 truncate">
+                      <span className="text-slate-400 text-[9.5px]">NID: </span>{b.nidOrBirthCert}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Distribution Status Pill */}
+                <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400 font-medium">Status:</span>
+                  <span className="font-semibold text-slate-650 truncate max-w-[200px]">
                     {getProfileHistoryText(b)}
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="flex justify-end gap-1.5">
-                      <button
-                        onClick={() => {
-                          setTargetVerificationBeneficiary(b);
-                          setVerificationResult(null);
-                        }}
-                        className="text-emerald-650 hover:text-white border border-emerald-200 hover:bg-emerald-650 p-1.5 rounded transition cursor-pointer flex items-center justify-center bg-emerald-50/50"
-                        title="Verify Face Biometrics"
-                      >
-                        <Scan className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setActiveDetailsBeneficiary(b)}
-                        className="text-slate-500 hover:text-emerald-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
-                        title="View demographics profile"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setActiveCardBeneficiary(b)}
-                        className="text-slate-500 hover:text-emerald-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
-                        title="Identity Card panel"
-                      >
-                        <CreditCard className="w-3.5 h-3.5" />
-                      </button>
-                      {!isDonor && (
-                        <button
-                          onClick={() => onShowRegisterForm(b)}
-                          className="text-slate-500 hover:text-amber-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
-                          title="Edit profile data"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {(currentUser.role === 'SuperAdmin' || currentUser.role === 'FieldAdmin') && onDeleteBeneficiary && (
+                  </span>
+                </div>
+
+                {/* Mobile Action Buttons: Large thumb-friendly targets */}
+                <div className="mt-2.5 pt-2 border-t border-slate-200/60 grid grid-cols-4 sm:grid-cols-5 gap-1.5">
+                  <button
+                    onClick={() => {
+                      setTargetVerificationBeneficiary(b);
+                      setVerificationResult(null);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10.5px] py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition shadow-2xs col-span-1"
+                    title="Verify Face Biometrics"
+                  >
+                    <Scan className="w-3.5 h-3.5" />
+                    <span>Scan</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveDetailsBeneficiary(b)}
+                    className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px] py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition"
+                    title="View demographics profile"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Info</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveCardBeneficiary(b)}
+                    className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-semibold text-[10.5px] py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition"
+                    title="Identity Card panel"
+                  >
+                    <CreditCard className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Card</span>
+                  </button>
+
+                  {!isDonor && (
+                    <button
+                      onClick={() => onShowRegisterForm(b)}
+                      className="bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 font-semibold text-[10.5px] py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition"
+                      title="Edit profile data"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  {(currentUser.role === 'SuperAdmin' || currentUser.role === 'FieldAdmin') && onDeleteBeneficiary && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Are you absolutely sure you want to delete beneficiary "${b.name}"? This will permanently erase their biometrics descriptor and record history.`)) {
+                          onDeleteBeneficiary(b.id);
+                        }
+                      }}
+                      className="bg-white hover:bg-rose-50 text-rose-650 border border-slate-200 font-semibold text-[10.5px] py-1.5 px-2 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition col-span-4 sm:col-span-1"
+                      title="Delete beneficiary record"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span className="sm:hidden">Delete</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* ========================================================================= */}
+          {/* DESKTOP & TABLET TABLE VIEW (>= md): FULL SPREADSHEET DETAIL */}
+          {/* ========================================================================= */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[9.5px] bg-slate-50">
+                  <th className="p-3">Face</th>
+                  <th className="p-3">Unique ID</th>
+                  <th className="p-3">Full Name</th>
+                  <th className="p-3">NID / Birth Cert</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3">Distribution Status</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredBeneficiaries.map((b) => (
+                  <tr key={b.id} className="hover:bg-slate-50/40">
+                    <td className="p-3">
+                      <div className="w-9 h-11 bg-slate-100 border border-slate-200 rounded overflow-hidden">
+                        {b.photo ? (
+                          <img 
+                            src={b.photo}
+                            referrerPolicy="no-referrer"
+                            alt="Face Preview"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="text-[7px] text-slate-400 font-bold pt-4 text-center leading-none">NO PIC</div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-3 font-mono font-bold text-slate-700 select-all">{b.id}</td>
+                    <td className="p-3 font-semibold text-slate-850">
+                      <p className="font-bold">{b.name}</p>
+                      <p className="text-[9.5px] text-slate-440 font-normal">{getAge(b.dob)}, {b.gender}</p>
+                    </td>
+                    <td className="p-3 font-mono font-medium text-slate-600">{b.nidOrBirthCert}</td>
+                    <td className="p-3">
+                      <span className={`px-2 py-0.5 rounded-md font-bold text-[8.5px] uppercase ${
+                        b.type === 'Widow'
+                          ? 'bg-purple-50 text-purple-700 border border-purple-150'
+                          : b.type === 'Orphan'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-150'
+                          : b.type === 'Disable'
+                          ? 'bg-rose-50 text-rose-700 border border-rose-150'
+                          : 'bg-slate-100 text-slate-750'
+                      }`}>
+                        {b.type}
+                      </span>
+                    </td>
+                    <td className="p-3 text-[10px] font-medium text-slate-500">
+                      {getProfileHistoryText(b)}
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex justify-end gap-1.5">
                         <button
                           onClick={() => {
-                            if (confirm(`Are you absolutely sure you want to delete beneficiary "${b.name}"? This will permanently erase their biometrics descriptor and record history.`)) {
-                              onDeleteBeneficiary(b.id);
-                            }
+                            setTargetVerificationBeneficiary(b);
+                            setVerificationResult(null);
                           }}
-                          className="text-slate-550 hover:text-rose-700 border border-slate-200 p-1.5 rounded hover:bg-rose-50/45 cursor-pointer transition"
-                          title="Delete beneficiary record"
+                          className="text-emerald-650 hover:text-white border border-emerald-200 hover:bg-emerald-650 p-1.5 rounded transition cursor-pointer flex items-center justify-center bg-emerald-50/50"
+                          title="Verify Face Biometrics"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Scan className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        <button
+                          onClick={() => setActiveDetailsBeneficiary(b)}
+                          className="text-slate-500 hover:text-emerald-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
+                          title="View demographics profile"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setActiveCardBeneficiary(b)}
+                          className="text-slate-500 hover:text-emerald-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
+                          title="Identity Card panel"
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                        </button>
+                        {!isDonor && (
+                          <button
+                            onClick={() => onShowRegisterForm(b)}
+                            className="text-slate-500 hover:text-amber-700 border border-slate-200 p-1.5 rounded hover:bg-slate-50 cursor-pointer"
+                            title="Edit profile data"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {(currentUser.role === 'SuperAdmin' || currentUser.role === 'FieldAdmin') && onDeleteBeneficiary && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`Are you absolutely sure you want to delete beneficiary "${b.name}"? This will permanently erase their biometrics descriptor and record history.`)) {
+                                onDeleteBeneficiary(b.id);
+                              }
+                            }}
+                            className="text-slate-550 hover:text-rose-700 border border-slate-200 p-1.5 rounded hover:bg-rose-50/45 cursor-pointer transition"
+                            title="Delete beneficiary record"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* 2. Detail records modal inspector */}

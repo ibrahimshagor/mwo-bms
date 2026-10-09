@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { User, Program, Beneficiary, ServiceRecord, UserRole, InventoryItem, InventoryPackage, OfficeWarehouse } from './types';
+import { User, Program, Beneficiary, ServiceRecord, UserRole, InventoryItem, InventoryPackage, OfficeWarehouse, CatalogProduct } from './types';
 import { 
-  DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS, DEFAULT_OFFICE_WAREHOUSES,
+  DEFAULT_USERS, DEFAULT_PROGRAMS, DEFAULT_BENEFICIARIES, DEFAULT_SERVICE_RECORDS, DEFAULT_OFFICE_WAREHOUSES, DEFAULT_CATALOG_PRODUCTS,
   getSavedState, saveState 
 } from './data';
 import { 
@@ -26,7 +26,7 @@ function handleFirestoreError(
       ...(documentId ? { documentId } : {}),
       code: "permission-denied"
     };
-    console.error("Firestore Permission Denied:", errorPayload);
+    console.warn("Firestore Permission Notice:", errorPayload);
     
     try {
       window.dispatchEvent(new CustomEvent('firestore-permission-denied', { detail: errorPayload }));
@@ -74,13 +74,14 @@ import Footer from './components/Footer';
 import ExportControlPanel from './components/ExportControlPanel';
 import InventoryDesk from './components/InventoryDesk';
 import OfficeWarehouseManagement from './components/OfficeWarehouseManagement';
+import ProductCatalog from './components/ProductCatalog';
 
 // Icons
 import { 
   FolderLock, UserCog, ClipboardList, Users, ShieldAlert, KeyRound, 
   Settings, LogOut, CheckCircle, Database, HelpCircle, ArrowRight,
   TrendingUp, Users2, ShoppingBag, FolderGit, Menu, X, Scan, ArrowLeft,
-  Boxes, ChevronDown, Building2, Warehouse, Languages, Globe
+  Boxes, ChevronDown, Building2, Warehouse, Languages, Globe, Package
 } from 'lucide-react';
 import { useLanguage } from './context/LanguageContext';
 
@@ -93,6 +94,37 @@ export default function App() {
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(() => getSavedState('mwo_beneficiaries', DEFAULT_BENEFICIARIES));
   const [serviceRecords, setServiceRecords] = useState<ServiceRecord[]>(() => getSavedState('mwo_service_records', DEFAULT_SERVICE_RECORDS));
   const [facilities, setFacilities] = useState<OfficeWarehouse[]>(() => getSavedState('mwo_facilities', DEFAULT_OFFICE_WAREHOUSES));
+  const [products, setProducts] = useState<CatalogProduct[]>(() => getSavedState('mwo_products', DEFAULT_CATALOG_PRODUCTS));
+
+  const handleUpdateProducts = async (updatedProducts: CatalogProduct[]) => {
+    const prevProducts = [...products];
+    setProducts(updatedProducts);
+    saveState('mwo_products', updatedProducts);
+
+    // Sync removals to Firestore
+    const updatedIds = new Set(updatedProducts.map(p => p.id));
+    const deletedProducts = prevProducts.filter(p => !updatedIds.has(p.id));
+    for (const dp of deletedProducts) {
+      try {
+        await deleteDoc(doc(db, 'products', dp.id));
+      } catch (err) {
+        console.warn("Product deletion sync notice:", err);
+      }
+    }
+
+    // Sync all updated products to Firestore
+    for (const prod of updatedProducts) {
+      try {
+        const cleanProd = JSON.parse(JSON.stringify(prod));
+        await setDoc(doc(db, 'products', prod.id), cleanProd);
+      } catch (err: any) {
+        console.warn("Product sync to Firestore notice:", err);
+        if (err?.code === 'permission-denied' || err?.message?.includes('permission')) {
+          setFirestorePermissionError(true);
+        }
+      }
+    }
+  };
 
   // Dynamic programs mapper to make sure remainingStock & locations are ALWAYS accurate based on serviceRecords & inventory packages!
   const enrichedPrograms = programs.map(p => {
@@ -400,11 +432,111 @@ export default function App() {
       }
     );
 
+    // 5. Synchronize Facilities (Offices & Warehouses) Collection
+    const unsubscribeFacilities = onSnapshot(collection(db, 'facilities'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_facilities');
+          if (!alreadySeeded) {
+            try {
+              const toSeed = getSavedState('mwo_facilities', DEFAULT_OFFICE_WAREHOUSES);
+              for (const fac of toSeed) {
+                await setDoc(doc(db, 'facilities', fac.id), JSON.parse(JSON.stringify(fac)));
+              }
+              localStorage.setItem('mwo_seeded_facilities', 'true');
+            } catch (err) {
+              console.warn("Facilities initial Firestore seed error:", err);
+            }
+          }
+        } else {
+          const loaded: OfficeWarehouse[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as OfficeWarehouse);
+          });
+          // Reconcile with local facilities to preserve any local edits or additions
+          setFacilities(prev => {
+            const remoteMap = new Map(loaded.map(item => [item.id, item]));
+            const merged = [...loaded];
+            prev.forEach(localItem => {
+              if (!remoteMap.has(localItem.id)) {
+                merged.push(localItem);
+                setDoc(doc(db, 'facilities', localItem.id), JSON.parse(JSON.stringify(localItem))).catch(console.warn);
+              }
+            });
+            saveState('mwo_facilities', merged);
+            return merged;
+          });
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'facilities');
+        } catch (e: any) {
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore facilities listener in offline mode:", e.message);
+          }
+        }
+      }
+    );
+
+    // 6. Synchronize Central Product Catalog Collection
+    const unsubscribeProducts = onSnapshot(collection(db, 'products'), 
+      async (snapshot) => {
+        if (snapshot.empty) {
+          const alreadySeeded = localStorage.getItem('mwo_seeded_products');
+          if (!alreadySeeded) {
+            try {
+              const toSeed = getSavedState('mwo_products', DEFAULT_CATALOG_PRODUCTS);
+              for (const prod of toSeed) {
+                await setDoc(doc(db, 'products', prod.id), JSON.parse(JSON.stringify(prod)));
+              }
+              localStorage.setItem('mwo_seeded_products', 'true');
+            } catch (err) {
+              console.warn("Products initial Firestore seed error:", err);
+            }
+          }
+        } else {
+          const loaded: CatalogProduct[] = [];
+          snapshot.forEach((d) => {
+            loaded.push(d.data() as CatalogProduct);
+          });
+          // Reconcile with local products to preserve local additions and adjustments
+          setProducts(prev => {
+            const remoteMap = new Map(loaded.map(item => [item.id, item]));
+            const merged = [...loaded];
+            prev.forEach(localItem => {
+              if (!remoteMap.has(localItem.id)) {
+                merged.push(localItem);
+                setDoc(doc(db, 'products', localItem.id), JSON.parse(JSON.stringify(localItem))).catch(console.warn);
+              }
+            });
+            saveState('mwo_products', merged);
+            return merged;
+          });
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, 'list', 'products');
+        } catch (e: any) {
+          if (e.message?.includes('permission-denied')) {
+            setFirestorePermissionError(true);
+          } else {
+            console.warn("Firestore products listener in offline mode:", e.message);
+          }
+        }
+      }
+    );
+
     return () => {
       unsubscribeUsers();
       unsubscribePrograms();
       unsubscribeBeneficiaries();
       unsubscribeSR();
+      unsubscribeFacilities();
+      unsubscribeProducts();
     };
   }, []);
 
@@ -621,12 +753,15 @@ export default function App() {
       setFacilities(updated);
       saveState('mwo_facilities', updated);
 
-      triggerToast('success', `অফিস/গুদাম "${fac.name}" সংরক্ষিত হয়েছে!`);
+      triggerToast('success', isEn ? `Office/Warehouse "${fac.name}" saved successfully!` : `অফিস/গুদাম "${fac.name}" সংরক্ষিত হয়েছে!`);
 
       try {
         await setDoc(doc(db, 'facilities', fac.id), JSON.parse(JSON.stringify(fac)));
       } catch (e: any) {
         console.warn("Firestore facility save warning:", e);
+        if (e?.code === 'permission-denied' || e?.message?.includes('permission')) {
+          setFirestorePermissionError(true);
+        }
       }
     } catch (err: any) {
       console.warn("Facility save error:", err);
@@ -640,12 +775,15 @@ export default function App() {
       setFacilities(updated);
       saveState('mwo_facilities', updated);
 
-      triggerToast('success', `অফিস/গুদাম "${target?.name || ''}" মুছে ফেলা হয়েছে!`);
+      triggerToast('success', isEn ? `Office/Warehouse "${target?.name || ''}" deleted successfully.` : `অফিস/গুদাম "${target?.name || ''}" মুছে ফেলা হয়েছে!`);
 
       try {
         await deleteDoc(doc(db, 'facilities', facId));
       } catch (e: any) {
         console.warn("Firestore facility delete warning:", e);
+        if (e?.code === 'permission-denied' || e?.message?.includes('permission')) {
+          setFirestorePermissionError(true);
+        }
       }
     } catch (err: any) {
       console.warn("Facility delete error:", err);
@@ -1237,6 +1375,7 @@ export default function App() {
                      activeTab === 'beneficiaries' ? (isEn ? 'Beneficiary Directory' : 'সুবিধাভোগী ডিরেক্টরি') :
                      activeTab === 'programs' ? (isEn ? 'Programs & Relief' : 'প্রোগ্রাম ও ড্রাইভ') :
                      activeTab === 'inventory' ? (isEn ? 'Inventory Desk' : 'ইনভেন্টরি ডেস্ক') :
+                     activeTab === 'products' ? (isEn ? 'Product Catalog' : 'প্রোডাক্ট ক্যাটালগ ও স্টক') :
                      activeTab === 'facilities' ? (isEn ? 'Offices & Warehouses' : 'গুদাম ও অফিস ব্যবস্থাপনা') :
                      activeTab === 'users' ? (isEn ? 'User Management' : 'ইউজার ম্যানেজমেন্ট') :
                      activeTab === 'profile' ? (isEn ? 'Profile Settings' : 'প্রোফাইল সেটিংস') : activeTab}
@@ -1499,6 +1638,20 @@ export default function App() {
                         </button>
                       )}
 
+                      {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.permissions?.canManageInventory) && (
+                        <button
+                          onClick={() => navigateToTab('products')}
+                          className={`w-full text-left px-3 py-2.5 rounded-xl font-bold flex items-center gap-3 transition cursor-pointer ${
+                            activeTab === 'products' 
+                              ? 'bg-amber-600 text-white shadow-xs' 
+                              : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                          }`}
+                        >
+                          <Package className={`w-4 h-4 ${activeTab === 'products' ? 'text-white' : 'text-amber-600'}`} />
+                          <span>{isEn ? 'Product Catalog & Stocks' : 'প্রোডাক্ট ক্যাটালগ ও মোট স্টক'}</span>
+                        </button>
+                      )}
+
                       {(isSuperAdmin || currentUser?.role === 'InventoryManager' || currentUser?.role === 'FieldAdmin' || currentUser?.permissions?.canManageInventory) && (
                         <button
                           onClick={() => navigateToTab('facilities')}
@@ -1580,100 +1733,6 @@ export default function App() {
 
           {/* MAIN PAGE RENDER PLATFORMS */}
           <main className="flex-grow max-w-7xl w-full mx-auto px-4 pt-6 pb-24 lg:pb-8">
-            
-            {firestorePermissionError && (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-6 text-left shadow-sm">
-                <div className="flex items-start gap-3">
-                  <div className="bg-amber-100 text-amber-800 p-2.5 rounded-xl font-bold text-lg leading-none">
-                    ⚠️
-                  </div>
-                  <div className="flex-grow">
-                    <h3 className="text-sm font-bold text-amber-950 mb-1">
-                      Firestore Database Configuration Required
-                    </h3>
-                    <p className="text-xs text-amber-800 leading-relaxed max-w-4xl">
-                      We detected a <strong>Missing or insufficient permissions (permission-denied)</strong> error. 
-                      Since you are utilizing your own custom Firebase project (<code>mwo-bms-cf886</code>), you must configure your Firestore Database Security Rules in the Firebase console to allow reading and writing these collections.
-                    </p>
-                    
-                    <div className="mt-4 bg-slate-900 text-slate-100 rounded-xl p-4 font-mono text-[11px] leading-relaxed relative border border-slate-800 shadow-inner">
-                      <button 
-                        type="button"
-                        className="absolute right-3 top-3 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 px-2 py-1 rounded cursor-pointer select-none font-sans border border-slate-700 transition"
-                        onClick={() => {
-                          navigator.clipboard.writeText(
-`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if true;
-    }
-    match /programs/{programId} {
-      allow read, write: if true;
-    }
-    match /beneficiaries/{beneficiaryId} {
-      allow read, write: if true;
-    }
-    match /service_records/{recordId} {
-      allow read, write: if true;
-    }
-    match /{document=**} {
-      allow read, write: if false;
-    }
-  }
-}`
-                          );
-                          triggerToast('success', 'Hardened Firestore Security Rules copied to clipboard!');
-                        }}>
-                        Copy Rules
-                      </button>
-                      <span className="text-slate-500 block mb-2 font-sans">// Paste these Rules in your Firebase Console (Firestore Database &gt; Rules)</span>
-                      {`rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if true;
-    }
-    match /programs/{programId} {
-      allow read, write: if true;
-    }
-    match /beneficiaries/{beneficiaryId} {
-      allow read, write: if true;
-    }
-    match /service_records/{recordId} {
-      allow read, write: if true;
-    }
-    match /{document=**} {
-      allow read, write: if false;
-    }
-  }
-}`}
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                      <a 
-                        href="https://console.firebase.google.com/project/mwo-bms-cf886/firestore/rules" 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="bg-amber-800 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-amber-900 transition flex items-center gap-1 cursor-pointer"
-                      >
-                        Go to Firestore Rules Console ↗
-                      </a>
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          setFirestorePermissionError(false);
-                          window.location.reload();
-                        }}
-                        className="bg-white border border-amber-300 text-amber-800 font-bold px-3 py-1.5 rounded-lg hover:bg-amber-100 transition cursor-pointer"
-                      >
-                        Dismiss & Reconnect 🔄
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
             
             {/* 1. HOMEPAGE DASHBOARD RENDER (Universal / Staff View) */}
             {activeTab === 'dashboard' && !isDonor && (
@@ -2049,6 +2108,22 @@ service cloud.firestore {
               />
             )}
 
+            {/* ====== 5.55 CENTRAL PRODUCT CATALOG & STOCKS ====== */}
+            {activeTab === 'products' && (
+              <ProductCatalog
+                products={products}
+                facilities={facilities}
+                programs={enrichedPrograms}
+                currentUser={currentUser}
+                onUpdateProducts={handleUpdateProducts}
+                onNavigateToWarehouse={() => setActiveTab('facilities')}
+                onNavigateToInventory={(pId) => {
+                  setSelectedInventoryProgramId(pId || null);
+                  setActiveTab('inventory');
+                }}
+              />
+            )}
+
             {/* ====== 5.6 DEDICATED OFFICES & WAREHOUSES MANAGEMENT ====== */}
             {activeTab === 'facilities' && (
               <OfficeWarehouseManagement
@@ -2153,18 +2228,18 @@ service cloud.firestore {
       {/* FIXED 5-BUTTON QUICK NAVIGATION MENU (MOBILE & TABLET BOTTOM BAR) */}
       {/* ========================================================================= */}
       {currentUser && (
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-2xl px-2 py-1.5 flex items-center justify-around select-none">
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-2xl px-1.5 py-1 grid grid-cols-5 gap-1 select-none items-center">
           {/* 1. Beneficiary Directory */}
           <button
             onClick={() => navigateToTab('beneficiaries')}
-            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer active:scale-95 text-center w-full min-h-[50px] ${
               activeTab === 'beneficiaries'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'text-emerald-700 font-extrabold bg-emerald-50/80 shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <Users className={`w-5 h-5 mb-0.5 ${activeTab === 'beneficiaries' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
-            <span className="text-[10px] leading-none tracking-tight">
+            <Users className={`w-5 h-5 mb-1 shrink-0 ${activeTab === 'beneficiaries' ? 'text-emerald-600' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-tight font-bold tracking-tight line-clamp-1 truncate w-full text-center">
               {isEn ? 'Beneficiaries' : 'সুবিধাভোগী'}
             </span>
           </button>
@@ -2175,14 +2250,14 @@ service cloud.firestore {
               setSelectedInventoryProgramId(null);
               navigateToTab('inventory');
             }}
-            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
-              activeTab === 'inventory'
-                ? 'text-amber-600 font-extrabold'
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer active:scale-95 text-center w-full min-h-[50px] ${
+              activeTab === 'inventory' || activeTab === 'products'
+                ? 'text-amber-700 font-extrabold bg-amber-50/80 shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <Boxes className={`w-5 h-5 mb-0.5 ${activeTab === 'inventory' ? 'text-amber-600 scale-110' : 'text-slate-500'}`} />
-            <span className="text-[10px] leading-none tracking-tight">
+            <Boxes className={`w-5 h-5 mb-1 shrink-0 ${activeTab === 'inventory' || activeTab === 'products' ? 'text-amber-600' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-tight font-bold tracking-tight line-clamp-1 truncate w-full text-center">
               {isEn ? 'Inventory' : 'ইনভেন্টরি'}
             </span>
           </button>
@@ -2190,34 +2265,30 @@ service cloud.firestore {
           {/* 3. CENTER HERO BUTTON: Biometric Face Scan */}
           <button
             onClick={() => navigateToTab('biometrics')}
-            className="flex flex-col items-center justify-center cursor-pointer -translate-y-3 active:scale-95 group focus:outline-none"
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer active:scale-95 text-center w-full min-h-[50px] ${
+              activeTab === 'biometrics'
+                ? 'bg-emerald-600 text-white font-extrabold shadow-sm'
+                : 'bg-emerald-50/90 text-emerald-800 font-bold border border-emerald-200/80 hover:bg-emerald-100'
+            }`}
             title={isEn ? 'Biometric Face Scan' : 'বায়োমেট্রিক ফেস স্ক্যান'}
           >
-            <div className={`w-13 h-13 rounded-full flex items-center justify-center shadow-lg transition-transform duration-200 border-4 border-slate-50 ${
-              activeTab === 'biometrics'
-                ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-emerald-500/40 ring-2 ring-emerald-500 scale-105'
-                : 'bg-gradient-to-tr from-emerald-700 to-emerald-500 text-white shadow-emerald-700/30 group-hover:scale-105'
-            }`}>
-              <Scan className="w-6 h-6 animate-pulse" />
-            </div>
-            <span className={`text-[10.5px] font-extrabold mt-0.5 tracking-tight ${
-              activeTab === 'biometrics' ? 'text-emerald-600' : 'text-slate-700'
-            }`}>
-              {isEn ? 'Face Scan' : 'বায়োমেট্রিক'}
+            <Scan className={`w-5 h-5 mb-1 shrink-0 ${activeTab === 'biometrics' ? 'text-white animate-pulse' : 'text-emerald-600'}`} />
+            <span className="text-[10px] leading-tight font-bold tracking-tight line-clamp-1 truncate w-full text-center">
+              {isEn ? 'Biometrics' : 'বায়োমেট্রিক'}
             </span>
           </button>
 
           {/* 4. Relief Programs */}
           <button
             onClick={() => navigateToTab('programs')}
-            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer active:scale-95 text-center w-full min-h-[50px] ${
               activeTab === 'programs'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'text-emerald-700 font-extrabold bg-emerald-50/80 shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <ClipboardList className={`w-5 h-5 mb-0.5 ${activeTab === 'programs' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
-            <span className="text-[10px] leading-none tracking-tight">
+            <ClipboardList className={`w-5 h-5 mb-1 shrink-0 ${activeTab === 'programs' ? 'text-emerald-600' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-tight font-bold tracking-tight line-clamp-1 truncate w-full text-center">
               {isEn ? 'Programs' : 'প্রোগ্রাম'}
             </span>
           </button>
@@ -2225,14 +2296,14 @@ service cloud.firestore {
           {/* 5. Warehouse & Offices */}
           <button
             onClick={() => navigateToTab('facilities')}
-            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition cursor-pointer active:scale-95 min-w-[62px] ${
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer active:scale-95 text-center w-full min-h-[50px] ${
               activeTab === 'facilities'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'text-emerald-700 font-extrabold bg-emerald-50/80 shadow-2xs'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <Building2 className={`w-5 h-5 mb-0.5 ${activeTab === 'facilities' ? 'text-emerald-600 scale-110' : 'text-slate-500'}`} />
-            <span className="text-[10px] leading-none tracking-tight">
+            <Building2 className={`w-5 h-5 mb-1 shrink-0 ${activeTab === 'facilities' ? 'text-emerald-600' : 'text-slate-500'}`} />
+            <span className="text-[10px] leading-tight font-bold tracking-tight line-clamp-1 truncate w-full text-center">
               {isEn ? 'Warehouses' : 'গুদাম ও শাখা'}
             </span>
           </button>

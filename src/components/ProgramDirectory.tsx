@@ -369,21 +369,21 @@ export default function ProgramDirectory({
   };
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-4 sm:space-y-6 max-w-5xl mx-auto px-1 sm:px-0">
       
       {/* 1. Main Programs directory directory */}
       {activeTab === 'directory' && (
-        <div className="space-y-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-150 mb-4">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wider font-display">
+        <div className="space-y-3.5 sm:space-y-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-150 mb-3.5 sm:mb-4">
+              <h3 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2 uppercase tracking-wider font-display">
                 <Layers className="w-4.5 h-4.5 text-emerald-600" />
                 {isDonor ? 'Assigned Distributions Dashboard' : 'Global Programs Directory Area'}
               </h3>
               {currentUser.role === 'SuperAdmin' && onShowCreateProgram && (
                 <button
                   onClick={onShowCreateProgram}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-1.5 px-3.5 rounded-xl flex items-center gap-1 cursor-pointer shadow-xs transition"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-1.5 px-3.5 rounded-xl flex items-center gap-1 cursor-pointer shadow-xs transition w-full sm:w-auto justify-center"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Launch New Program
@@ -392,7 +392,7 @@ export default function ProgramDirectory({
             </div>
 
             {/* Filter control bar */}
-            <div className="flex flex-col sm:flex-row gap-3.5 mb-5">
+            <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3.5 mb-4 sm:mb-5">
               <div className="relative flex-grow">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-3.5" />
                 <input
@@ -642,12 +642,12 @@ export default function ProgramDirectory({
 
       {/* 2. SPECIFIC PROGRAM ADMIN DESK panel */}
        {activeTab === 'desk' && selectedDeskProgram && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           
           {/* Back trigger card header */}
-          <div className="bg-slate-800 text-white rounded-2xl p-5 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div className="bg-slate-800 text-white rounded-2xl p-3.5 sm:p-5 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4">
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
+              <div className="flex items-center gap-2 mb-1">
                 <button
                   onClick={() => {
                     setActiveTab('directory');
@@ -661,23 +661,23 @@ export default function ProgramDirectory({
                   {selectedDeskProgram.id} &bull; DESK OPERATION
                 </span>
               </div>
-              <h2 className="text-base font-bold font-display leading-tight">{selectedDeskProgram.name}</h2>
-              <div className="flex gap-4 items-center text-xs text-white/70 mt-1.5 font-mono">
-                <span>Timeline Date: {selectedDeskProgram.programDate}</span>
+              <h2 className="text-sm sm:text-base font-bold font-display leading-tight">{selectedDeskProgram.name}</h2>
+              <div className="flex flex-wrap gap-2 sm:gap-4 items-center text-[11px] sm:text-xs text-white/70 mt-1 font-mono">
+                <span>Date: {selectedDeskProgram.programDate}</span>
                 <span>Type: {selectedDeskProgram.type}</span>
               </div>
             </div>
 
-            <div className="bg-white/10 px-4 py-2.5 rounded-xl text-center border border-white/5 shrink-0">
+            <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/5 shrink-0 self-stretch sm:self-auto">
               <span className="block text-[8px] uppercase tracking-wider font-bold text-white/50 mb-0.5">Distribution Stock Balance</span>
-              <span className="text-lg font-black text-amber-400 font-mono leading-none">
+              <span className="text-base sm:text-lg font-black text-amber-400 font-mono leading-none">
                 {selectedDeskProgram.remainingStock} <span className="text-xs font-semibold">/ {selectedDeskProgram.targetStockSize} Pacs</span>
               </span>
             </div>
           </div>
 
           {deskAlert && (
-            <div className={`border text-xs font-semibold px-4 py-3 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-250 ${
+            <div className={`border text-xs font-semibold px-3.5 py-2.5 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-250 ${
               deskAlert.type === 'success' 
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
                 : 'bg-rose-50 border-rose-200 text-rose-800'
@@ -691,10 +691,10 @@ export default function ProgramDirectory({
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 sm:gap-6 items-start">
             
             {/* Left Portion: Verification & distribution allocation fields (7 span columns) */}
-            <div className="md:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5">
+            <div className="md:col-span-7 bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-5 shadow-sm space-y-4 sm:space-y-5">
               <div className="pb-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">

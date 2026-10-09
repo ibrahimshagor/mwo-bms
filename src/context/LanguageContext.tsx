@@ -16,6 +16,7 @@ export const DICTIONARY: TranslationsDict = {
   'nav.beneficiaries': { en: 'Beneficiary Directory', bn: 'সুবিধাভোগী ডিরেক্টরি' },
   'nav.programs': { en: 'Programs & Relief', bn: 'প্রোগ্রাম ও ত্রাণ' },
   'nav.inventory': { en: 'Inventory Desk', bn: 'ইনভেন্টরি ডেস্ক' },
+  'nav.products': { en: 'Product Catalog & Stocks', bn: 'প্রোডাক্ট ক্যাটালগ ও মোট স্টক' },
   'nav.facilities': { en: 'Offices & Warehouses', bn: 'গুদাম ও শাখা ব্যবস্থাপনা' },
   'nav.users': { en: 'User Management', bn: 'ইউজার ম্যানেজমেন্ট' },
   'nav.profile': { en: 'Profile Settings', bn: 'প্রোফাইল সেটিংস' },

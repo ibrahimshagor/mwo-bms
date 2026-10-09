@@ -20,5 +20,11 @@ service cloud.firestore {
     match /service_records/{recordId} {
       allow read, write: if true;
     }
+    match /facilities/{facilityId} {
+      allow read, write: if true;
+    }
+    match /products/{productId} {
+      allow read, write: if true;
+    }
   }
 }

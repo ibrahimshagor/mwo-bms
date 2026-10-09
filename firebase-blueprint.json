@@ -61,6 +61,39 @@
         "servedAdmin": { "type": "string" }
       },
       "required": ["id", "programId", "beneficiaryId", "packageCount", "servedAdmin"]
+    },
+    "OfficeWarehouse": {
+      "title": "OfficeWarehouse",
+      "description": "Office or warehouse facility",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "address": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "phone": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "type"]
+    },
+    "CatalogProduct": {
+      "title": "CatalogProduct",
+      "description": "Central catalog product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "sku": { "type": "string" },
+        "description": { "type": "string" },
+        "minStockAlert": { "type": "number" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "unit"]
     }
   },
   "firestore": {
@@ -79,6 +112,14 @@
     "/service_records/{recordId}": {
       "schema": "ServiceRecord",
       "description": "Log of served distributions"
+    },
+    "/facilities/{facilityId}": {
+      "schema": "OfficeWarehouse",
+      "description": "Offices and warehouses list"
+    },
+    "/products/{productId}": {
+      "schema": "CatalogProduct",
+      "description": "Central product catalog items"
     }
   }
 }
